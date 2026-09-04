@@ -1,15 +1,19 @@
 # SOLUTION.md
 
-Status: **Backend complete and its technical checklist closed out**: all 7 OpenAPI endpoints
-implemented and verified end to end, 100% of the backend test suite green (78/78, zero
-`@Disabled` stubs, including 4 ArchUnit rules enforcing the hexagonal layering as a build-time
-check), and the `potential-suppliers` query benchmarked with `EXPLAIN` against 300k seeded rows
-(index usage confirmed for the status filter; a documented, honest performance trade-off found
-for the country-based bonus ranking — see §4 and "Progress log" iteration 13). Every endpoint
-works for real against Postgres (and, for `accept`, the WireMock country service through a
-genuinely wired resilience4j Circuit Breaker), through every layer. **Remaining work on the whole
-project: only the frontend (0% implemented) and verifying the full 4-service
-`docker compose up`.**
+Status: **Feature-complete end to end.** Backend: all 7 OpenAPI endpoints implemented and
+verified end to end, 100% of the backend test suite green (78/78, zero `@Disabled` stubs,
+including 4 ArchUnit rules enforcing the hexagonal layering as a build-time check), and the
+`potential-suppliers` query benchmarked with `EXPLAIN` against 300k seeded rows (index usage
+confirmed for the status filter; a documented, honest performance trade-off found for the
+country-based bonus ranking — see §4 and "Progress log" iteration 13). Every endpoint works for
+real against Postgres (and, for `accept`, the WireMock country service through a genuinely wired
+resilience4j Circuit Breaker), through every layer. Frontend: the potential-suppliers dashboard
+(iteration 15) implements every requirement in the README's frontend table — amount search with
+minimum-250 validation, sortable/filterable results table, client-side name/DUNS/country/rating
+filtering, limit/offset pagination with result count, and distinct loading/error/empty states —
+verified against the real backend through the full `docker compose up` stack, not just unit
+tests. **Remaining work: none identified; see "Aspectos dejados fuera" for scope intentionally
+left out.**
 
 ## Progress log
 
@@ -329,6 +333,89 @@ project: only the frontend (0% implemented) and verifying the full 4-service
     - Cleaned up afterward: dropped the experimental index, truncated the 300k synthetic rows,
       tore down the containers.
   - `mvn test`: `Tests run: 78, Failures: 0, Errors: 0, Skipped: 0` (74 + 4 new ArchUnit rules).
+- **Iteration 14** (commit `8b58526`) — removed the last stale "TODO: implement" javadoc left over
+  from the skeleton stage on the 7 `application.service` classes.
+- **Iteration 15** (this commit) — implemented the frontend, the only piece left in the whole
+  project: the potential-suppliers dashboard against the scaffold left in `frontend/src`
+  (types, empty component/hook stubs, and a `SOLUTION.md` checklist item flagging that every
+  component returned `null`).
+  - **API layer**: `api/client.ts` (`fetch` wrapper resolving `VITE_API_BASE_URL`, parsing the
+    `{info}` error schema into a typed `ApiClientError`, distinguishing network failures from
+    HTTP error responses) and `api/suppliersApi.ts` (`GET /suppliers/potential`).
+  - **Hooks**: `usePotentialSuppliers` (fetch lifecycle — loading/error/data — plus a `hasSearched`
+    flag so the dashboard can distinguish "never searched yet" from "searched, zero results"),
+    `useClientFilters` (name/DUNS substring + country + rating, applied to the already-fetched
+    page — does not re-trigger the backend call), `useTableSort` (defaults to `score`/`desc` per
+    the README, toggles asc/desc on repeat clicks, sorts numeric columns numerically rather than
+    lexicographically).
+  - **Components**: all 7 implemented per their existing prop contracts — `SearchForm` (numeric
+    input, custom "must be at least 250" message), `LoadingIndicator`, `ErrorMessage`,
+    `EmptyState`, `FiltersBar` (free-text search, multi-select country dropdown, rating
+    checkboxes), `ResultsTable` (the 6 README columns, currency/score formatting via
+    `utils/formatters`, clickable sortable headers with an asc/desc indicator), `Pagination`
+    (limit/offset controls plus the result count). `Dashboard` composes all of them per the
+    ordering already sketched in its TODO comment.
+  - **Two real bugs found only by testing in a real browser, not by reading the code**:
+    - `SearchForm`'s `<input min={250}>` triggers the browser's own native constraint-validation
+      tooltip on submit, which silently prevents the `onSubmit` handler (and therefore the custom
+      "Amount must be at least 250" message) from ever running — confirmed by driving the actual
+      rendered page, where clicking Search with `100` in the field did nothing visible at all.
+      Fixed with `noValidate` on the `<form>`, so the app's own validation message is what the
+      user always sees, matching the README's "display validation message if not met".
+    - The `Dashboard` only showed `EmptyState` when the *server* page was empty; filtering an
+      already-nonempty page down to zero rows with the client-side search/country/rating filters
+      rendered a bare table (headers, no rows) instead of any message. Found by filtering a real
+      populated result down to nothing in the browser. Fixed: `Dashboard` now also renders
+      `EmptyState` when the post-filter row count is zero, distinct from the server-empty case
+      (the `FiltersBar` itself stays visible in that case, since the user needs it to adjust the
+      filter that produced zero rows — unlike the server-empty case, where there is nothing to
+      filter yet).
+  - **A real CORS gap, not a frontend bug**: there is no Spring Security dependency in the
+    backend, so nothing was emitting `Access-Control-Allow-Origin`. `curl` (used for every
+    backend verification in this file) doesn't enforce CORS, so this was invisible until the
+    dashboard was actually opened in a browser against the real backend, where every
+    `GET /suppliers/potential` call failed silently (blocked client-side, no network entry showing
+    a server-side rejection). Fixed with
+    `backend/.../infrastructure/config/WebCorsConfig.java`, a `WebMvcConfigurer` allowing
+    `http://localhost:*` origins for `GET`/`POST` — scoped to `infrastructure.config`, same as the
+    existing `RestClientConfig`, so it doesn't violate the `HexagonalArchitectureTest` rules.
+    Re-ran the full backend suite afterward: `Tests run: 78, Failures: 0, Errors: 0, Skipped: 0`,
+    unchanged.
+  - **Two scaffold defects that would have broken `docker compose up` / CI, unrelated to the
+    frontend logic itself, fixed alongside it**:
+    - `package.json` pinned `eslint-plugin-react-hooks@^4.6.2` against `eslint@^9.11.1` — an
+      unsatisfiable peer dependency (`eslint-plugin-react-hooks@4` peers on ESLint 3-8) that makes
+      a plain `npm install` fail with `ERESOLVE` (confirmed by running it before touching
+      anything). Bumped to `^5.0.0`, which supports ESLint 9. The `frontend/Dockerfile`'s
+      `RUN npm install` would have hit this same failure on every build.
+    - No `eslint.config.js` existed at all, so `npm run lint` failed outright
+      ("ESLint couldn't find an eslint.config.(js|mjs|cjs) file") — ESLint 9 requires the flat
+      config format and ships no fallback. Added one (typescript-eslint + react-hooks +
+      react-refresh, browser globals via the `globals` package), then fixed the 6 real `no-undef`
+      errors it surfaced (`fetch`, `window`, `URL`, `Response`, `document`, `HTMLSelectElement`)
+      once browser globals were correctly wired in.
+    - Also switched `frontend/Dockerfile` from `npm install` to `npm ci` against the now-committed
+      `package-lock.json`, for a reproducible, faster Docker build.
+  - **Testing**: added the frontend's first tests — `formatters.test.ts` (currency/score
+    formatting, including the es-ES non-breaking-space detail), `useClientFilters.test.ts` and
+    `useTableSort.test.ts` (the client-side logic most likely to silently regress), and
+    `SearchForm.test.tsx` (the validation behavior above, as a regression test for the
+    `noValidate` fix). `npm run test`: 17/17 green. `vitest`/`jsdom`/`@testing-library/react`
+    added as dev dependencies for this (none existed in the scaffold).
+  - **Verified against the real stack, not mocks**: `docker compose up --build` (all 4 services),
+    seeded real data through the actual API (`POST /candidates` + `.../accept`, including the
+    turnover-eligibility guard rejecting an acceptance attempt below €1,000,000 — confirming that
+    rule is still enforced, not just the frontend's own >250 check), then drove the running
+    dashboard in a real browser: amount validation, the loading spinner mid-request, the
+    populated results table sorted score-descending by default, column-header sort toggling
+    (verified alphabetical *and* numeric columns sort correctly, not lexicographically), the
+    country + rating filters combining correctly, the client-filtered-to-zero empty state, the
+    server-side-zero empty state (a rate high enough that no supplier qualifies), and
+    limit/offset pagination across a real second page (13 seeded suppliers, `limit=10` from the
+    OpenAPI's `QueryLimit.maximum`, confirmed "Page 2 of 2" with `Next` correctly disabled).
+    `npm run build`/`npm run lint`/`npm run test` all clean throughout. Cleaned up afterward:
+    `docker compose down` + removed the seeded `db-data` volume, so the delivered environment
+    starts empty.
 
 ## How to start
 
@@ -538,10 +625,17 @@ it.
       materializing the whole per-country eligible population before any `LIMIT` can apply. See
       "Progress log" iteration 13 and §4 below for the full analysis and the documented
       denormalization option left out of scope.
-- [ ] **Frontend components** — every component under `src/components` currently returns `null`;
-      confirm loading/error/empty states are reachable and distinct once wired.
-- [x] **Docker Compose** — `docker compose up --build db backend` boots cleanly end to end
-      (verified: `/actuator/health` → 200). `[ ]` still open: verify `frontend` too, and the
-      full `docker compose up` with all four services together.
-- [ ] **Documentation** — keep this file's "Design decisions" section in sync with any further
-      pivots, especially if the two confirmed FSM deviations above are revisited.
+- [x] **Frontend components** — every README frontend requirement implemented (search with
+      min-250 validation, sortable/filterable results table, client-side name/DUNS/country/rating
+      filters, limit/offset pagination with result count, distinct loading/error/empty states —
+      including the client-filtered-to-zero case, not just the server-empty one) and verified in a
+      real browser against the real backend, not just by reading the code. See "Progress log"
+      iteration 15 for the two real bugs (native `min` validation swallowing the custom message;
+      the missing client-filtered empty state) and the CORS gap it also surfaced and fixed.
+- [x] **Docker Compose** — `docker compose up --build` (all four services) boots cleanly end to
+      end; verified by seeding real data through the live API and driving the running dashboard in
+      a browser, covering search, sorting, filtering, both empty-state paths, and pagination
+      across a real second page. See "Progress log" iteration 15.
+- [x] **Documentation** — this file's "Design decisions", "Progress log", and checklist are kept
+      in sync with the frontend work in iteration 15; the two confirmed FSM deviations from
+      earlier iterations were not revisited by the frontend work and remain as documented above.

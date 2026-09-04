@@ -1,11 +1,6 @@
-// Thin fetch wrapper. TODO: implement.
-//
-// Responsibilities to cover here (not in individual API modules or components):
-// - Resolve the base URL from import.meta.env.VITE_API_BASE_URL.
-// - Parse non-2xx responses into ApiError (schema: { info: string }) and throw a typed error.
-// - Surface network failures (fetch rejecting) distinctly from HTTP error responses, so
-//   components can show the same "friendly error message" either way (README frontend
-//   requirements table, "Error handling").
+import type { ApiError } from '../types/supplier';
+
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 export class ApiClientError extends Error {
   constructor(message: string, public readonly status?: number) {
@@ -13,6 +8,33 @@ export class ApiClientError extends Error {
   }
 }
 
-export async function apiGet<T>(_path: string, _params?: Record<string, string | number>): Promise<T> {
-  throw new Error('TODO: implement apiGet');
+export async function apiGet<T>(path: string, params?: Record<string, string | number>): Promise<T> {
+  const url = new URL(path, BASE_URL || window.location.origin);
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.set(key, String(value));
+    }
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url.toString());
+  } catch {
+    throw new ApiClientError('Unable to reach the server. Please check your connection and try again.');
+  }
+
+  if (!response.ok) {
+    let info = `Request failed with status ${response.status}`;
+    try {
+      const body = (await response.json()) as ApiError;
+      if (body?.info) {
+        info = body.info;
+      }
+    } catch {
+      // response body wasn't valid JSON — fall back to the generic message above.
+    }
+    throw new ApiClientError(info, response.status);
+  }
+
+  return (await response.json()) as T;
 }

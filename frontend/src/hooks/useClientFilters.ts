@@ -11,15 +11,24 @@ export interface UseClientFiltersResult {
   apply: (rows: PotentialSupplier[]) => PotentialSupplier[];
 }
 
-// TODO: implement client-side filtering (README: "Client-side search" by name/DUNS, "Country
-// filter", "Rating filter"). These filter the already-fetched page client-side — they do not
-// re-trigger the backend call, unlike rate/limit/offset which do.
 export function useClientFilters(): UseClientFiltersResult {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
   const [selectedRatings, setSelectedRatings] = useState<string[]>([]);
 
-  const apply = (rows: PotentialSupplier[]) => rows;
+  const apply = (rows: PotentialSupplier[]) => {
+    const term = searchTerm.trim().toLowerCase();
+
+    return rows.filter((row) => {
+      const matchesTerm =
+        term.length === 0 ||
+        row.name.toLowerCase().includes(term) ||
+        String(row.duns).includes(term);
+      const matchesCountry = selectedCountries.length === 0 || selectedCountries.includes(row.country);
+      const matchesRating = selectedRatings.length === 0 || selectedRatings.includes(row.sustainabilityRating);
+      return matchesTerm && matchesCountry && matchesRating;
+    });
+  };
 
   return {
     searchTerm,

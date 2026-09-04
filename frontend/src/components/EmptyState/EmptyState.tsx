@@ -1,5 +1,3 @@
-// TODO: implement — shown when a search returns zero suppliers (README: "Empty state... Message
-// when no suppliers match the criteria").
 export function EmptyState() {
-  return null;
+  return <div className="empty-state">No suppliers match the given criteria.</div>;
 }

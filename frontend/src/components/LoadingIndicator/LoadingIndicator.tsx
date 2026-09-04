@@ -1,5 +1,8 @@
-// TODO: implement — shown while a GET /suppliers/potential request is in flight (README:
-// "Loading state").
 export function LoadingIndicator() {
-  return null;
+  return (
+    <div className="loading-indicator" role="status" aria-live="polite">
+      <span className="loading-indicator__spinner" aria-hidden="true" />
+      Loading suppliers…
+    </div>
+  );
 }

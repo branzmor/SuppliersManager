@@ -11,17 +11,36 @@ export interface UseTableSortResult {
   sort: (rows: PotentialSupplier[]) => PotentialSupplier[];
 }
 
-// TODO: implement column-header click sorting (README: "Column sorting... toggling
-// ascending/descending"). Default should be score/descending per README "Default sort".
 export function useTableSort(): UseTableSortResult {
-  const [sortColumn] = useState<SortableColumn>('score');
-  const [sortDirection] = useState<SortDirection>('desc');
+  const [sortColumn, setSortColumn] = useState<SortableColumn>('score');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
-  const toggleSort = (_column: SortableColumn) => {
-    throw new Error('TODO: implement toggleSort');
+  const toggleSort = (column: SortableColumn) => {
+    if (column === sortColumn) {
+      setSortDirection((direction) => (direction === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
   };
 
-  const sort = (rows: PotentialSupplier[]) => rows;
+  const sort = (rows: PotentialSupplier[]) => {
+    const sorted = [...rows].sort((a, b) => {
+      const valueA = a[sortColumn];
+      const valueB = b[sortColumn];
+
+      let comparison: number;
+      if (typeof valueA === 'number' && typeof valueB === 'number') {
+        comparison = valueA - valueB;
+      } else {
+        comparison = String(valueA).localeCompare(String(valueB));
+      }
+
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+
+    return sorted;
+  };
 
   return { sortColumn, sortDirection, toggleSort, sort };
 }

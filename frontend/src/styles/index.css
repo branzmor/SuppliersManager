@@ -1,5 +1,27 @@
-/* TODO: base/reset styles. Left minimal intentionally for this skeleton iteration. */
+:root {
+  color-scheme: light;
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-border: #e0e3e8;
+  --color-text: #1a1d23;
+  --color-text-muted: #5c6270;
+  --color-primary: #2a5bd7;
+  --color-primary-hover: #1e46ab;
+  --color-danger: #c0392b;
+  --color-danger-bg: #fdecea;
+}
+
+* {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
-  font-family: system-ui, sans-serif;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+button {
+  font-family: inherit;
 }
