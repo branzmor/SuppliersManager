@@ -514,8 +514,10 @@ it.
       the potential-suppliers scoring/bonus formula matched exactly against the README's worked
       example, all empirically confirmed, not just unit-tested. `[ ]` still open: nothing at the
       endpoint level — remaining work is test coverage, code quality, and the frontend.
-- [ ] **Code quality** — remove now-stale TODO javadoc comments as each piece is implemented; keep
-      constructor injection, no field injection.
+- [x] **Code quality** — removed the last stale "TODO: implement" javadoc from the 7
+      `application.service` classes that had them (iteration 14; the domain/web/persistence
+      layers were already clean). Constructor injection used throughout, no field injection
+      anywhere in the codebase.
 - [x] **Testing — 100% complete: 74/74 green, zero `@Disabled` stubs.** `domain.model` (23 —
       `SupplierRecordTest`, `DunsTest`, `CountryCodeTest`, `AnnualTurnoverTest`,
       `SustainabilityRatingTest`, `SupplierStatusTest`), all 9 `application.service` classes (26),
