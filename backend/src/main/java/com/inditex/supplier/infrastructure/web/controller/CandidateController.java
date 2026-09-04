@@ -8,6 +8,8 @@ import com.inditex.supplier.infrastructure.web.dto.CandidateAcceptRequestDto;
 import com.inditex.supplier.infrastructure.web.dto.CandidateRequestDto;
 import com.inditex.supplier.infrastructure.web.dto.CandidateResponseDto;
 import com.inditex.supplier.infrastructure.web.mapper.CandidateWebMapper;
+import com.inditex.supplier.domain.exception.SupplierRecordNotFoundException;
+import com.inditex.supplier.domain.model.Duns;
 import com.inditex.supplier.domain.model.SupplierRecord;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -64,9 +66,9 @@ public class CandidateController {
 
     @GetMapping("/{duns}")
     public CandidateResponseDto getCandidate(@PathVariable int duns) {
-        // TODO: call getCandidateUseCase; if empty, let GlobalExceptionHandler / a thrown
-        // SupplierRecordNotFoundException produce 404; otherwise map to response DTO with 200.
-        throw new UnsupportedOperationException("TODO");
+        SupplierRecord record = getCandidateUseCase.getByDuns(duns)
+                .orElseThrow(() -> new SupplierRecordNotFoundException(new Duns(duns)));
+        return candidateWebMapper.toResponseDto(record);
     }
 
     @PostMapping("/{duns}/accept")

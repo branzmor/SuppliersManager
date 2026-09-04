@@ -1,12 +1,11 @@
 # SOLUTION.md
 
-Status: **`domain` layer complete; first real endpoint working end to end**. The hexagonal/DDD
-package structure, ports, DTOs (1:1 with the OpenAPI contract), and remaining
-controller/entity/mapper stubs are in place. `domain.model` is fully implemented and 100%
-unit-tested. `POST /candidates` now works for real, against Postgres, through every layer
-(controller → mapper → use case → persistence adapter → JPA → Flyway-migrated table). Every other
-endpoint (`GET /candidates/{duns}`, accept, refuse, `GET /suppliers/*`, ban) still throws
-`UnsupportedOperationException` (500) — that's the next slice.
+Status: **`domain` layer complete; 3 of 7 endpoints working end to end**. `domain.model` is fully
+implemented and 100% unit-tested. `POST /candidates`, `GET /candidates/{duns}` and
+`GET /suppliers/{duns}` all work for real against Postgres, through every layer (controller →
+mapper → use case → persistence adapter → JPA → Flyway-migrated table). Still `TODO`: accept,
+refuse, ban, potential-suppliers, and the external country-service Circuit Breaker — those
+endpoints still throw `UnsupportedOperationException` (500).
 
 ## Progress log
 
@@ -63,7 +62,7 @@ endpoint (`GET /candidates/{duns}`, accept, refuse, `GET /suppliers/*`, ban) sti
     seconds` → `/actuator/health` → `200`, confirming the new constructor validation doesn't
     break the boot path (nothing yet calls `SupplierRecord.reconstitute` with real DB rows, so
     this was a compile/wiring check more than a behavioral one).
-- **Iteration 5** (this commit) — closed the first full use case end to end:
+- **Iteration 5** (commit `c92204d`) — closed the first full use case end to end:
   `SupplierPersistenceMapper` (domain ↔ JPA entity, both directions), `SupplierPersistenceAdapter`
   (`findByDuns`/`save` with upsert-by-DUNS semantics — `save` looks up by DUNS first and either
   updates the managed entity in place or inserts a new one), `RegisterCandidateService` (the
@@ -88,6 +87,27 @@ endpoint (`GET /candidates/{duns}`, accept, refuse, `GET /suppliers/*`, ban) sti
   - `mvn test` in the Maven container still green after the compile fix (protected constructor):
     `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51` (unchanged — no test stub was un-disabled
     this iteration; the verification was manual end-to-end against Docker instead).
+- **Iteration 6** (this commit) — implemented the read paths: `GetCandidateService`/
+  `GetSupplierService` (`findByDuns` + the visibility filter already on `SupplierRecord`),
+  `SupplierWebMapper#toResponseDto`/`#toStatusDto` (the internal→external status mapping —
+  `CANDIDATE`/`REFUSED` throw `IllegalStateException` if they ever reach it, since upstream
+  filtering should make that impossible), `GET /candidates/{duns}` and `GET /suppliers/{duns}`
+  on both controllers, and the `SupplierRecordNotFoundException` → 404 handler in
+  `GlobalExceptionHandler`. `SupplierWebMapper#toPotentialResponseDto` stays a stub — out of
+  scope until `GetPotentialSuppliersService`/the SQL query are implemented.
+  - **Verified against real Postgres**: `GET /candidates/123456789` (the row from iteration 5,
+    still `CANDIDATE`) → `200`; `GET /suppliers/123456789` on that same row → `404` (correctly
+    not yet visible as a supplier); `GET /candidates/999999999` (never existed) → `404`. Then,
+    since `AcceptCandidateService`/`BanSupplierService` aren't implemented yet, used `psql`
+    directly against the `db` container to flip the row's status and confirmed the
+    internal→external mapping empirically, not just by reading the code:
+    `UPDATE ... SET status='ACTIVE'` → `GET /suppliers/{duns}` → `"status":"Active"`;
+    `UPDATE ... SET status='BANNED'` → `"status":"Disqualified"`;
+    `UPDATE ... SET status='ON_PROBATION'` → `"status":"Active"` (the whole reason this
+    internal/external split exists — README §"Integrity Rules": "The API does not distinguish
+    between Active and On Probation").
+  - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51`
+    (unchanged — verification was manual against Docker again).
 
 ## How to start
 
@@ -234,19 +254,20 @@ it.
 
 - [ ] **Architecture and design** — domain has zero framework imports; verify with a build-time
       check (e.g. ArchUnit) before calling this done.
-- [x] **Business logic** — `domain.model` fully implemented, and `POST /candidates` works end to
-      end for real (verified against Postgres — see "Progress log", iteration 5). `[ ]` still
-      open: every other `UnsupportedOperationException("TODO")` in
-      `application.service`/`infrastructure` (accept, refuse, ban, get-candidate, get-supplier,
-      potential-suppliers).
+- [x] **Business logic** — `domain.model` fully implemented; `POST /candidates`,
+      `GET /candidates/{duns}` and `GET /suppliers/{duns}` all work end to end for real (verified
+      against Postgres — see "Progress log", iterations 5-6), including the internal→external
+      status mapping empirically confirmed for all 3 internal statuses that can reach it. `[ ]`
+      still open: `accept`, `refuse`, `ban`, `potential-suppliers`, and the country-service
+      Circuit Breaker.
 - [ ] **Code quality** — remove now-stale TODO javadoc comments as each piece is implemented; keep
       constructor injection, no field injection.
 - [x] **Testing** — `domain.model` is 100% tested: 23/23 green (`SupplierRecordTest`, `DunsTest`,
       `CountryCodeTest`, `AnnualTurnoverTest`, `SustainabilityRatingTest`, `SupplierStatusTest`),
-      verified via `mvn test` in a Maven container — see "Progress log". `POST /candidates` was
-      verified manually end-to-end via `curl` against real Postgres instead of an automated test
-      (`CandidateControllerTest`/`RegisterCandidateServiceTest` remain `@Disabled` — un-disabling
-      them is still open). `[ ]` still open: un-`@Disabled` the remaining 51 tests as their
+      verified via `mvn test` in a Maven container — see "Progress log". The 3 working endpoints
+      were verified manually end-to-end via `curl`/`psql` against real Postgres instead of
+      automated tests (the corresponding controller/service/mapper test stubs remain `@Disabled` —
+      un-disabling them is still open). `[ ]` still open: un-`@Disabled` the remaining 51 tests as their
       production code lands; the `SupplierPersistenceAdapterTest` bonus-calculation test against
       the README's worked example (200k/200k/200k/210k/250k) is the single highest-value test
       still pending — do not skip it.

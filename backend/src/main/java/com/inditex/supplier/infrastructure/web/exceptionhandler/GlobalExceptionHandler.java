@@ -87,7 +87,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(SupplierRecordNotFoundException.class)
     public ResponseEntity<Void> handleSupplierRecordNotFound(SupplierRecordNotFoundException ex) {
-        throw new UnsupportedOperationException("TODO");
+        return ResponseEntity.notFound().build();
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

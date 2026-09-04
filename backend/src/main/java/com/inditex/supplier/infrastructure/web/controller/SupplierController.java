@@ -3,6 +3,8 @@ package com.inditex.supplier.infrastructure.web.controller;
 import com.inditex.supplier.application.port.in.BanSupplierUseCase;
 import com.inditex.supplier.application.port.in.GetPotentialSuppliersUseCase;
 import com.inditex.supplier.application.port.in.GetSupplierUseCase;
+import com.inditex.supplier.domain.exception.SupplierRecordNotFoundException;
+import com.inditex.supplier.domain.model.Duns;
 import com.inditex.supplier.infrastructure.web.dto.PotentialSuppliersResponseDto;
 import com.inditex.supplier.infrastructure.web.dto.SupplierResponseDto;
 import com.inditex.supplier.infrastructure.web.mapper.SupplierWebMapper;
@@ -59,8 +61,9 @@ public class SupplierController {
 
     @GetMapping("/{duns}")
     public SupplierResponseDto getSupplier(@PathVariable int duns) {
-        // TODO: call getSupplierUseCase; empty -> 404 (SupplierRecordNotFoundException), else map -> 200.
-        throw new UnsupportedOperationException("TODO");
+        return getSupplierUseCase.getByDuns(duns)
+                .map(supplierWebMapper::toResponseDto)
+                .orElseThrow(() -> new SupplierRecordNotFoundException(new Duns(duns)));
     }
 
     @PostMapping("/{duns}/ban")

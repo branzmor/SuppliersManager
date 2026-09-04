@@ -3,9 +3,11 @@ package com.inditex.supplier.infrastructure.web.mapper;
 import com.inditex.supplier.application.port.out.ScoredSupplier;
 import com.inditex.supplier.domain.model.SupplierRecord;
 import com.inditex.supplier.domain.model.SupplierStatus;
+import com.inditex.supplier.domain.model.SustainabilityRating;
 import com.inditex.supplier.infrastructure.web.dto.PotentialSupplierResponseDto;
 import com.inditex.supplier.infrastructure.web.dto.SupplierResponseDto;
 import com.inditex.supplier.infrastructure.web.dto.SupplierStatusDto;
+import com.inditex.supplier.infrastructure.web.dto.SustainabilityRatingDto;
 import org.springframework.stereotype.Component;
 
 /**
@@ -26,7 +28,13 @@ import org.springframework.stereotype.Component;
 public class SupplierWebMapper {
 
     public SupplierResponseDto toResponseDto(SupplierRecord record) {
-        throw new UnsupportedOperationException("TODO");
+        return new SupplierResponseDto(
+                record.annualTurnover().value(),
+                record.country().isoCode(),
+                record.duns().value(),
+                record.name(),
+                toStatusDto(record.status()),
+                SustainabilityRatingDto.valueOf(record.sustainabilityRating().name()));
     }
 
     public PotentialSupplierResponseDto toPotentialResponseDto(ScoredSupplier scoredSupplier) {
@@ -38,6 +46,11 @@ public class SupplierWebMapper {
      *     those must never reach this mapper.
      */
     public SupplierStatusDto toStatusDto(SupplierStatus status) {
-        throw new UnsupportedOperationException("TODO");
+        return switch (status) {
+            case ACTIVE, ON_PROBATION -> SupplierStatusDto.Active;
+            case BANNED -> SupplierStatusDto.Disqualified;
+            case CANDIDATE, REFUSED -> throw new IllegalStateException(
+                    "status " + status + " must never reach SupplierWebMapper - isVisibleAsSupplier() should have filtered it out upstream");
+        };
     }
 }

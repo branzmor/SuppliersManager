@@ -2,6 +2,7 @@ package com.inditex.supplier.application.service;
 
 import com.inditex.supplier.application.port.in.GetSupplierUseCase;
 import com.inditex.supplier.application.port.out.SupplierRepositoryPort;
+import com.inditex.supplier.domain.model.Duns;
 import com.inditex.supplier.domain.model.SupplierRecord;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,6 +24,6 @@ public class GetSupplierService implements GetSupplierUseCase {
     @Override
     @Transactional(readOnly = true)
     public java.util.Optional<SupplierRecord> getByDuns(int duns) {
-        throw new UnsupportedOperationException("TODO");
+        return supplierRepositoryPort.findByDuns(new Duns(duns)).filter(SupplierRecord::isVisibleAsSupplier);
     }
 }
