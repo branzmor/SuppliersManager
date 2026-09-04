@@ -16,10 +16,11 @@ import org.springframework.stereotype.Component;
 public class CandidateWebMapper {
 
     public RegisterCandidateCommand toCommand(CandidateRequestDto dto) {
-        throw new UnsupportedOperationException("TODO");
+        return new RegisterCandidateCommand(dto.duns(), dto.name(), dto.country(), dto.annualTurnover());
     }
 
     public CandidateResponseDto toResponseDto(SupplierRecord record) {
-        throw new UnsupportedOperationException("TODO");
+        return new CandidateResponseDto(
+                record.annualTurnover().value(), record.country().isoCode(), record.duns().value(), record.name());
     }
 }

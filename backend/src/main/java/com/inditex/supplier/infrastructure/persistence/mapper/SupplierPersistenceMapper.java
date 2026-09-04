@@ -1,7 +1,14 @@
 package com.inditex.supplier.infrastructure.persistence.mapper;
 
+import com.inditex.supplier.domain.model.AnnualTurnover;
+import com.inditex.supplier.domain.model.CountryCode;
+import com.inditex.supplier.domain.model.Duns;
 import com.inditex.supplier.domain.model.SupplierRecord;
+import com.inditex.supplier.domain.model.SupplierStatus;
+import com.inditex.supplier.domain.model.SustainabilityRating;
 import com.inditex.supplier.infrastructure.persistence.entity.SupplierRecordEntity;
+import com.inditex.supplier.infrastructure.persistence.entity.SupplierStatusJpa;
+import com.inditex.supplier.infrastructure.persistence.entity.SustainabilityRatingJpa;
 import org.springframework.stereotype.Component;
 
 /**
@@ -14,11 +21,25 @@ import org.springframework.stereotype.Component;
 public class SupplierPersistenceMapper {
 
     public SupplierRecord toDomain(SupplierRecordEntity entity) {
-        throw new UnsupportedOperationException("TODO");
+        SustainabilityRatingJpa ratingJpa = entity.getSustainabilityRating();
+        return SupplierRecord.reconstitute(
+                new Duns(entity.getDuns()),
+                entity.getName(),
+                new CountryCode(entity.getCountry()),
+                new AnnualTurnover(entity.getAnnualTurnover()),
+                SupplierStatus.valueOf(entity.getStatus().name()),
+                ratingJpa == null ? null : SustainabilityRating.valueOf(ratingJpa.name()));
     }
 
     public SupplierRecordEntity toEntity(SupplierRecord record) {
-        throw new UnsupportedOperationException("TODO");
+        SustainabilityRating rating = record.sustainabilityRating();
+        return new SupplierRecordEntity(
+                record.duns().value(),
+                record.name(),
+                record.country().isoCode(),
+                record.annualTurnover().value(),
+                SupplierStatusJpa.valueOf(record.status().name()),
+                rating == null ? null : SustainabilityRatingJpa.valueOf(rating.name()));
     }
 
     /**
@@ -27,6 +48,12 @@ public class SupplierPersistenceMapper {
      * replace-by-id.
      */
     public void updateEntity(SupplierRecordEntity entity, SupplierRecord record) {
-        throw new UnsupportedOperationException("TODO");
+        SustainabilityRating rating = record.sustainabilityRating();
+        entity.setDuns(record.duns().value());
+        entity.setName(record.name());
+        entity.setCountry(record.country().isoCode());
+        entity.setAnnualTurnover(record.annualTurnover().value());
+        entity.setStatus(SupplierStatusJpa.valueOf(record.status().name()));
+        entity.setSustainabilityRating(rating == null ? null : SustainabilityRatingJpa.valueOf(rating.name()));
     }
 }

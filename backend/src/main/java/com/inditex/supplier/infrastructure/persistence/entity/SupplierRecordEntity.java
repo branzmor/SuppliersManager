@@ -51,7 +51,15 @@ public class SupplierRecordEntity {
         // JPA
     }
 
-    // TODO: add an all-args constructor (excluding generated id) once the persistence mapper is implemented.
+    public SupplierRecordEntity(Integer duns, String name, String country, Long annualTurnover,
+                                 SupplierStatusJpa status, SustainabilityRatingJpa sustainabilityRating) {
+        this.duns = duns;
+        this.name = name;
+        this.country = country;
+        this.annualTurnover = annualTurnover;
+        this.status = status;
+        this.sustainabilityRating = sustainabilityRating;
+    }
 
     public Long getId() {
         return id;

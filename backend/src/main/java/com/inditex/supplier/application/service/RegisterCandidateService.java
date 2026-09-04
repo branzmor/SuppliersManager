@@ -2,9 +2,17 @@ package com.inditex.supplier.application.service;
 
 import com.inditex.supplier.application.port.in.RegisterCandidateUseCase;
 import com.inditex.supplier.application.port.out.SupplierRepositoryPort;
+import com.inditex.supplier.domain.exception.CandidateAlreadyExistsException;
+import com.inditex.supplier.domain.exception.SupplierBannedException;
+import com.inditex.supplier.domain.model.AnnualTurnover;
+import com.inditex.supplier.domain.model.CountryCode;
+import com.inditex.supplier.domain.model.Duns;
 import com.inditex.supplier.domain.model.SupplierRecord;
+import com.inditex.supplier.domain.model.SupplierStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Optional;
 
 /**
  * TODO: implement.
@@ -28,6 +36,16 @@ public class RegisterCandidateService implements RegisterCandidateUseCase {
     @Override
     @Transactional
     public SupplierRecord register(RegisterCandidateCommand command) {
-        throw new UnsupportedOperationException("TODO");
+        Duns duns = new Duns(command.duns());
+        Optional<SupplierRecord> existing = supplierRepositoryPort.findByDuns(duns);
+        if (existing.isPresent()) {
+            if (existing.get().status() == SupplierStatus.BANNED) {
+                throw new SupplierBannedException(duns);
+            }
+            throw new CandidateAlreadyExistsException(duns);
+        }
+        SupplierRecord candidate = SupplierRecord.apply(
+                duns, command.name(), new CountryCode(command.country()), new AnnualTurnover(command.annualTurnover()));
+        return supplierRepositoryPort.save(candidate);
     }
 }

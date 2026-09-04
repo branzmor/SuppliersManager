@@ -4,6 +4,7 @@ import com.inditex.supplier.application.port.out.PotentialSuppliersPage;
 import com.inditex.supplier.application.port.out.SupplierRepositoryPort;
 import com.inditex.supplier.domain.model.Duns;
 import com.inditex.supplier.domain.model.SupplierRecord;
+import com.inditex.supplier.infrastructure.persistence.entity.SupplierRecordEntity;
 import com.inditex.supplier.infrastructure.persistence.mapper.SupplierPersistenceMapper;
 import com.inditex.supplier.infrastructure.persistence.repository.SupplierRecordJpaRepository;
 import org.springframework.stereotype.Component;
@@ -27,12 +28,18 @@ public class SupplierPersistenceAdapter implements SupplierRepositoryPort {
 
     @Override
     public Optional<SupplierRecord> findByDuns(Duns duns) {
-        throw new UnsupportedOperationException("TODO");
+        return jpaRepository.findByDuns(duns.value()).map(persistenceMapper::toDomain);
     }
 
     @Override
     public SupplierRecord save(SupplierRecord record) {
-        throw new UnsupportedOperationException("TODO");
+        SupplierRecordEntity entity = jpaRepository.findByDuns(record.duns().value())
+                .map(existing -> {
+                    persistenceMapper.updateEntity(existing, record);
+                    return existing;
+                })
+                .orElseGet(() -> persistenceMapper.toEntity(record));
+        return persistenceMapper.toDomain(jpaRepository.save(entity));
     }
 
     @Override

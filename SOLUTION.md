@@ -1,12 +1,12 @@
 # SOLUTION.md
 
-Status: **`domain` layer complete; skeleton elsewhere**. The hexagonal/DDD package structure,
-ports, DTOs (1:1 with the OpenAPI contract), controller/entity/mapper stubs, and test stubs are
-all in place. `domain.model` (the `SupplierRecord` aggregate, its value objects, and
-`SupplierStatus`) is now fully implemented and 100% unit-tested (see "Progress log" below); the
-Flyway migration is active and the backend boots end to end in Docker. `application.service` and
-`infrastructure` still throw `UnsupportedOperationException("TODO")` — no real endpoint works
-yet.
+Status: **`domain` layer complete; first real endpoint working end to end**. The hexagonal/DDD
+package structure, ports, DTOs (1:1 with the OpenAPI contract), and remaining
+controller/entity/mapper stubs are in place. `domain.model` is fully implemented and 100%
+unit-tested. `POST /candidates` now works for real, against Postgres, through every layer
+(controller → mapper → use case → persistence adapter → JPA → Flyway-migrated table). Every other
+endpoint (`GET /candidates/{duns}`, accept, refuse, `GET /suppliers/*`, ban) still throws
+`UnsupportedOperationException` (500) — that's the next slice.
 
 ## Progress log
 
@@ -49,7 +49,7 @@ yet.
     seconds`, `curl http://localhost:8080/actuator/health` → `200`. Re-ran `mvn test` in the
     Maven container afterwards to confirm nothing else broke: `Tests run: 74, Failures: 0,
     Errors: 0, Skipped: 61` (same as iteration 2 — no test touches the database yet).
-- **Iteration 4** (this commit) — finished the `domain.model` layer: input-range validation in
+- **Iteration 4** (commit `ffdb9c8`) — finished the `domain.model` layer: input-range validation in
   the `Duns`, `CountryCode` and `AnnualTurnover` compact constructors, and
   `SupplierStatus#isTerminal`. `CountryCode` is a deliberate design decision: strict validation,
   no lowercase→uppercase normalization (documented in its javadoc) — a code like `"es"` is
@@ -63,6 +63,31 @@ yet.
     seconds` → `/actuator/health` → `200`, confirming the new constructor validation doesn't
     break the boot path (nothing yet calls `SupplierRecord.reconstitute` with real DB rows, so
     this was a compile/wiring check more than a behavioral one).
+- **Iteration 5** (this commit) — closed the first full use case end to end:
+  `SupplierPersistenceMapper` (domain ↔ JPA entity, both directions), `SupplierPersistenceAdapter`
+  (`findByDuns`/`save` with upsert-by-DUNS semantics — `save` looks up by DUNS first and either
+  updates the managed entity in place or inserts a new one), `RegisterCandidateService` (the
+  existence/BANNED/already-exists guard, then `SupplierRecord.apply` + save),
+  `CandidateWebMapper`, and the `POST /candidates` controller method (`@ResponseStatus(CREATED)`).
+  Also added a public all-args constructor to `SupplierRecordEntity` (its no-arg constructor is
+  `protected` for JPA, so the mapper — in a different package — needed one to actually build a new
+  entity; this was already flagged as a TODO on the entity from iteration 1) and a
+  `GlobalExceptionHandler` handler for `CandidateAlreadyExistsException`, `SupplierBannedException`,
+  Bean Validation failures, and a new `IllegalArgumentException` handler (400) — needed because the
+  DTO's `@Size(min=2,max=2)` on `country` doesn't enforce uppercase, so a value like `"es"` passes
+  Bean Validation but fails `CountryCode`'s domain invariant; without this handler it would have
+  been an uncaught 500 instead of a 400.
+  - **Verified against real Postgres**, not mocks: rebuilt and started `db`+`backend`, then via
+    `curl`: a valid `POST /candidates` → `201` with the `Candidate` JSON body (no `status` field,
+    correctly); the same DUNS again → `409 {"info":"Candidate already exists"}`; a lowercase
+    country (`"es"`) → `400 {"info":"isoCode must be exactly 2 uppercase letters, got es"}`; a
+    missing `name` → `400 {"info":"name must not be blank"}`. Then queried
+    `supplier_record` directly via `psql` inside the `db` container and confirmed the row exists
+    with `status = CANDIDATE` and `sustainability_rating` empty (not yet accepted) — the round
+    trip is real, not just an in-memory illusion.
+  - `mvn test` in the Maven container still green after the compile fix (protected constructor):
+    `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51` (unchanged — no test stub was un-disabled
+    this iteration; the verification was manual end-to-end against Docker instead).
 
 ## How to start
 
@@ -209,18 +234,22 @@ it.
 
 - [ ] **Architecture and design** — domain has zero framework imports; verify with a build-time
       check (e.g. ArchUnit) before calling this done.
-- [x] **Business logic** — `domain.model` fully implemented: `SupplierRecord` state machine, all
-      value-object validation, `SupplierStatus#isTerminal`. `[ ]` still open: every
-      `UnsupportedOperationException("TODO")` in `application.service`/`infrastructure` — no real
-      endpoint works yet.
+- [x] **Business logic** — `domain.model` fully implemented, and `POST /candidates` works end to
+      end for real (verified against Postgres — see "Progress log", iteration 5). `[ ]` still
+      open: every other `UnsupportedOperationException("TODO")` in
+      `application.service`/`infrastructure` (accept, refuse, ban, get-candidate, get-supplier,
+      potential-suppliers).
 - [ ] **Code quality** — remove now-stale TODO javadoc comments as each piece is implemented; keep
       constructor injection, no field injection.
 - [x] **Testing** — `domain.model` is 100% tested: 23/23 green (`SupplierRecordTest`, `DunsTest`,
       `CountryCodeTest`, `AnnualTurnoverTest`, `SustainabilityRatingTest`, `SupplierStatusTest`),
-      verified via `mvn test` in a Maven container — see "Progress log". `[ ]` still open:
-      un-`@Disabled` the remaining 51 tests as their production code lands; the
-      `SupplierPersistenceAdapterTest` bonus-calculation test against the README's worked example
-      (200k/200k/200k/210k/250k) is the single highest-value test still pending — do not skip it.
+      verified via `mvn test` in a Maven container — see "Progress log". `POST /candidates` was
+      verified manually end-to-end via `curl` against real Postgres instead of an automated test
+      (`CandidateControllerTest`/`RegisterCandidateServiceTest` remain `@Disabled` — un-disabling
+      them is still open). `[ ]` still open: un-`@Disabled` the remaining 51 tests as their
+      production code lands; the `SupplierPersistenceAdapterTest` bonus-calculation test against
+      the README's worked example (200k/200k/200k/210k/250k) is the single highest-value test
+      still pending — do not skip it.
 - [ ] **Performance and scalability** — confirm `findPotentialSuppliers` never materializes more
       than one page of entities; run `EXPLAIN` on the final query against a seeded 100k+ row table.
 - [ ] **Frontend components** — every component under `src/components` currently returns `null`;

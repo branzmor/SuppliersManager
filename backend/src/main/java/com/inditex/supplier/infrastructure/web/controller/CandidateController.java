@@ -8,12 +8,15 @@ import com.inditex.supplier.infrastructure.web.dto.CandidateAcceptRequestDto;
 import com.inditex.supplier.infrastructure.web.dto.CandidateRequestDto;
 import com.inditex.supplier.infrastructure.web.dto.CandidateResponseDto;
 import com.inditex.supplier.infrastructure.web.mapper.CandidateWebMapper;
+import com.inditex.supplier.domain.model.SupplierRecord;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -53,9 +56,10 @@ public class CandidateController {
     }
 
     @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
     public CandidateResponseDto addCandidate(@Valid @RequestBody CandidateRequestDto request) {
-        // TODO: map request -> command, call registerCandidateUseCase, map result -> response, return 201.
-        throw new UnsupportedOperationException("TODO");
+        SupplierRecord registered = registerCandidateUseCase.register(candidateWebMapper.toCommand(request));
+        return candidateWebMapper.toResponseDto(registered);
     }
 
     @GetMapping("/{duns}")

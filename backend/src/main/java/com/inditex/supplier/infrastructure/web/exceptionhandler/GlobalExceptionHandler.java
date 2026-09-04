@@ -14,6 +14,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.util.stream.Collectors;
+
 /**
  * Translates domain exceptions (and Bean Validation failures) into the HTTP responses defined by
  * the OpenAPI contract.
@@ -54,12 +56,12 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(CandidateAlreadyExistsException.class)
     public ResponseEntity<ErrorResponseDto> handleCandidateAlreadyExists(CandidateAlreadyExistsException ex) {
-        throw new UnsupportedOperationException("TODO");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponseDto("Candidate already exists"));
     }
 
     @ExceptionHandler(SupplierBannedException.class)
     public ResponseEntity<ErrorResponseDto> handleSupplierBanned(SupplierBannedException ex) {
-        throw new UnsupportedOperationException("TODO");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponseDto("Supplier banned"));
     }
 
     @ExceptionHandler(CandidateNotAcceptableException.class)
@@ -90,6 +92,20 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponseDto> handleValidation(MethodArgumentNotValidException ex) {
-        throw new UnsupportedOperationException("TODO");
+        String message = ex.getBindingResult().getFieldErrors().stream()
+                .map(error -> error.getField() + " " + error.getDefaultMessage())
+                .collect(Collectors.joining(", "));
+        return ResponseEntity.badRequest().body(new ErrorResponseDto(message));
+    }
+
+    /**
+     * Catches domain value-object validation that Bean Validation on the DTO doesn't fully
+     * replicate — e.g. {@code CountryCode} requires exactly 2 uppercase letters, while the DTO
+     * only checks length. Not part of the original 6-exception table; added so a request that
+     * passes DTO validation but fails a domain invariant still gets a 400, not a 500.
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ErrorResponseDto> handleIllegalArgument(IllegalArgumentException ex) {
+        return ResponseEntity.badRequest().body(new ErrorResponseDto(ex.getMessage()));
     }
 }
