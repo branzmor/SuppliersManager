@@ -26,7 +26,7 @@ public record AnnualTurnover(long value) {
      * @return true if this turnover meets the minimum required to accept a candidate.
      */
     public boolean meetsMinimumForAcceptance() {
-        throw new UnsupportedOperationException("TODO");
+        return value >= MINIMUM_ACCEPTABLE_TURNOVER;
     }
 
     /**
@@ -35,6 +35,6 @@ public record AnnualTurnover(long value) {
      *     eligibility rule).
      */
     public boolean isEligibleFor(long rate) {
-        throw new UnsupportedOperationException("TODO");
+        return value > rate;
     }
 }

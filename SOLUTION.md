@@ -1,9 +1,36 @@
 # SOLUTION.md
 
-Status: **skeleton only**. This iteration delivers the full hexagonal/DDD package structure,
-ports, DTOs (1:1 with the OpenAPI contract), controller/entity/mapper stubs, and test stubs, all
-compilable but with `UnsupportedOperationException("TODO")` in place of business logic. No
-business rule is implemented yet.
+Status: **skeleton + first business-logic slice**. The hexagonal/DDD package structure, ports,
+DTOs (1:1 with the OpenAPI contract), controller/entity/mapper stubs, and test stubs are all in
+place. The `SupplierRecord` aggregate's state machine is now fully implemented and unit-tested
+(see "Progress log" below); `application.service` and `infrastructure` still throw
+`UnsupportedOperationException("TODO")`.
+
+## Progress log
+
+- **Iteration 1** — hexagonal skeleton: packages, ports, DTOs, controller/entity/mapper stubs,
+  test stubs, Docker Compose wiring. Nothing executable yet.
+- **Iteration 2** (this commit) — implemented the core business logic in
+  `domain.model.SupplierRecord`: `apply`, `reconstitute`, `accept`, `refuse`, `ban`, `restrict`,
+  `promote`, `isVisibleAsCandidate`, `isVisibleAsSupplier`. Also implemented the two value-object
+  helper methods `accept()` directly depends on —
+  `AnnualTurnover#meetsMinimumForAcceptance`/`#isEligibleFor` and
+  `SustainabilityRating#qualifiesForActive` — since leaving them as stubs would have made
+  `accept()` throw regardless of its own logic. VO input-range validation (`Duns`, `CountryCode`,
+  compact constructors) and `SupplierStatus#isTerminal` are still `TODO`, deliberately left for a
+  later slice.
+  - `domain.model.SupplierRecordTest` un-disabled and implemented: 13 tests, all green (state
+    transitions, every guard, visibility filters, and a dedicated test proving `REFUSED` has no
+    outgoing transition from any of the 5 mutating operations — see decision 1a below).
+  - **Verified in Docker**, not just by reading the code:
+    - `mvn test` run inside a `maven:3.9-eclipse-temurin-21` container against `backend/`:
+      `Tests run: 74, Failures: 0, Errors: 0, Skipped: 61` — the 13 `SupplierRecordTest` cases are
+      the only ones actually executing; the other 61 remain `@Disabled` stubs as expected.
+    - `docker compose up --build db backend`: the image builds and Spring Boot starts, but the
+      container exits as documented below ("Known current limitation") with
+      `SchemaManagementException: Schema-validation: missing table [supplier_record]` — confirming
+      the Flyway gap is real, not just a note in this file. Stack torn down with
+      `docker compose down` after the check.
 
 ## How to start
 
@@ -155,15 +182,17 @@ it.
 
 - [ ] **Architecture and design** — domain has zero framework imports; verify with a build-time
       check (e.g. ArchUnit) before calling this done.
-- [ ] **Business logic** — every `UnsupportedOperationException("TODO")` in `domain.model` and
-      `application.service` replaced with real logic; every guard in the exception table actually
-      throws the right exception in the right order.
+- [x] **Business logic** — `domain.model.SupplierRecord` state machine implemented (this
+      commit). `[ ]` still open: VO input-range validation (`Duns`, `CountryCode`,
+      `AnnualTurnover` compact constructors), `SupplierStatus#isTerminal`, and every
+      `UnsupportedOperationException("TODO")` in `application.service`/`infrastructure`.
 - [ ] **Code quality** — remove now-stale TODO javadoc comments as each piece is implemented; keep
       constructor injection, no field injection.
-- [ ] **Testing** — un-`@Disabled` each test stub as its production code lands; the
+- [x] **Testing** — `domain.model.SupplierRecordTest` implemented and green (13/13, verified via
+      `mvn test` in a Maven container — see "Progress log"). `[ ]` still open: un-`@Disabled` the
+      remaining 61 tests as their production code lands; the
       `SupplierPersistenceAdapterTest` bonus-calculation test against the README's worked example
-      (200k/200k/200k/210k/250k) is the single highest-value test in the whole suite — do not skip
-      it.
+      (200k/200k/200k/210k/250k) is the single highest-value test still pending — do not skip it.
 - [ ] **Performance and scalability** — confirm `findPotentialSuppliers` never materializes more
       than one page of entities; run `EXPLAIN` on the final query against a seeded 100k+ row table.
 - [ ] **Frontend components** — every component under `src/components` currently returns `null`;

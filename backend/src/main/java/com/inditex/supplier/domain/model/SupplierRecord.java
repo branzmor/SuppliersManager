@@ -5,6 +5,10 @@ import com.inditex.supplier.domain.exception.CandidateNotAcceptableException;
 import com.inditex.supplier.domain.exception.CandidateNotRefusableException;
 import com.inditex.supplier.domain.exception.SupplierBannedException;
 import com.inditex.supplier.domain.exception.SupplierNotBannableException;
+import com.inditex.supplier.domain.exception.SupplierNotPromotableException;
+import com.inditex.supplier.domain.exception.SupplierNotRestrictableException;
+
+import java.util.Objects;
 
 /**
  * Aggregate root of the bounded context. Identity = {@link Duns}.
@@ -81,7 +85,13 @@ public class SupplierRecord {
      * @throws IllegalArgumentException if any field is invalid (delegated to the value objects)
      */
     public static SupplierRecord apply(Duns duns, String name, CountryCode country, AnnualTurnover annualTurnover) {
-        throw new UnsupportedOperationException("TODO");
+        Objects.requireNonNull(duns, "duns must not be null");
+        Objects.requireNonNull(country, "country must not be null");
+        Objects.requireNonNull(annualTurnover, "annualTurnover must not be null");
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("name must not be blank");
+        }
+        return new SupplierRecord(duns, name, country, annualTurnover, SupplierStatus.CANDIDATE, null);
     }
 
     /**
@@ -91,7 +101,12 @@ public class SupplierRecord {
     public static SupplierRecord reconstitute(Duns duns, String name, CountryCode country,
                                                AnnualTurnover annualTurnover, SupplierStatus status,
                                                SustainabilityRating sustainabilityRating) {
-        throw new UnsupportedOperationException("TODO");
+        Objects.requireNonNull(duns, "duns must not be null");
+        Objects.requireNonNull(name, "name must not be null");
+        Objects.requireNonNull(country, "country must not be null");
+        Objects.requireNonNull(annualTurnover, "annualTurnover must not be null");
+        Objects.requireNonNull(status, "status must not be null");
+        return new SupplierRecord(duns, name, country, annualTurnover, status, sustainabilityRating);
     }
 
     /**
@@ -114,7 +129,19 @@ public class SupplierRecord {
      *     check could not be completed — see {@code CountryCheckUnavailableException})
      */
     public void accept(SustainabilityRating rating, boolean countryBanned) {
-        throw new UnsupportedOperationException("TODO");
+        Objects.requireNonNull(rating, "rating must not be null");
+        if (status != SupplierStatus.CANDIDATE) {
+            throw new CandidateNotAcceptableException(duns, "status is " + status + ", expected CANDIDATE");
+        }
+        if (countryBanned) {
+            throw new CandidateNotAcceptableException(duns, "country " + country.isoCode() + " is not approved");
+        }
+        if (!annualTurnover.meetsMinimumForAcceptance()) {
+            throw new CandidateNotAcceptableException(duns, "annual turnover " + annualTurnover.value()
+                    + " is below the minimum of " + AnnualTurnover.MINIMUM_ACCEPTABLE_TURNOVER);
+        }
+        this.sustainabilityRating = rating;
+        this.status = rating.qualifiesForActive() ? SupplierStatus.ACTIVE : SupplierStatus.ON_PROBATION;
     }
 
     /**
@@ -123,7 +150,10 @@ public class SupplierRecord {
      * @throws CandidateNotRefusableException if {@code status != CANDIDATE}
      */
     public void refuse() {
-        throw new UnsupportedOperationException("TODO");
+        if (status != SupplierStatus.CANDIDATE) {
+            throw new CandidateNotRefusableException(duns);
+        }
+        this.status = SupplierStatus.REFUSED;
     }
 
     /**
@@ -133,7 +163,10 @@ public class SupplierRecord {
      * @throws SupplierNotBannableException if {@code status != ON_PROBATION}
      */
     public void ban() {
-        throw new UnsupportedOperationException("TODO");
+        if (status != SupplierStatus.ON_PROBATION) {
+            throw new SupplierNotBannableException(duns);
+        }
+        this.status = SupplierStatus.BANNED;
     }
 
     /**
@@ -144,7 +177,10 @@ public class SupplierRecord {
      *     {@code status != ACTIVE}
      */
     public void restrict() {
-        throw new UnsupportedOperationException("TODO");
+        if (status != SupplierStatus.ACTIVE) {
+            throw new SupplierNotRestrictableException(duns);
+        }
+        this.status = SupplierStatus.ON_PROBATION;
     }
 
     /**
@@ -155,7 +191,10 @@ public class SupplierRecord {
      *     {@code status != ON_PROBATION}
      */
     public void promote() {
-        throw new UnsupportedOperationException("TODO");
+        if (status != SupplierStatus.ON_PROBATION) {
+            throw new SupplierNotPromotableException(duns);
+        }
+        this.status = SupplierStatus.ACTIVE;
     }
 
     /**
@@ -164,7 +203,7 @@ public class SupplierRecord {
      *     (see {@code SOLUTION.md} §"API pública vs. estado interno").
      */
     public boolean isVisibleAsCandidate() {
-        throw new UnsupportedOperationException("TODO");
+        return status == SupplierStatus.CANDIDATE || status == SupplierStatus.REFUSED;
     }
 
     /**
@@ -173,7 +212,7 @@ public class SupplierRecord {
      *     {@code BANNED}.
      */
     public boolean isVisibleAsSupplier() {
-        throw new UnsupportedOperationException("TODO");
+        return status == SupplierStatus.ACTIVE || status == SupplierStatus.ON_PROBATION || status == SupplierStatus.BANNED;
     }
 
     public Duns duns() {

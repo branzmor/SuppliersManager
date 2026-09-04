@@ -38,6 +38,6 @@ public enum SustainabilityRating {
      *     (i.e. {@code A} or {@code B}).
      */
     public boolean qualifiesForActive() {
-        throw new UnsupportedOperationException("TODO");
+        return this == A || this == B;
     }
 }
