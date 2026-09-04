@@ -1,16 +1,18 @@
 # SOLUTION.md
 
-Status: **skeleton + first business-logic slice**. The hexagonal/DDD package structure, ports,
-DTOs (1:1 with the OpenAPI contract), controller/entity/mapper stubs, and test stubs are all in
-place. The `SupplierRecord` aggregate's state machine is now fully implemented and unit-tested
-(see "Progress log" below); `application.service` and `infrastructure` still throw
-`UnsupportedOperationException("TODO")`.
+Status: **`domain` layer complete; skeleton elsewhere**. The hexagonal/DDD package structure,
+ports, DTOs (1:1 with the OpenAPI contract), controller/entity/mapper stubs, and test stubs are
+all in place. `domain.model` (the `SupplierRecord` aggregate, its value objects, and
+`SupplierStatus`) is now fully implemented and 100% unit-tested (see "Progress log" below); the
+Flyway migration is active and the backend boots end to end in Docker. `application.service` and
+`infrastructure` still throw `UnsupportedOperationException("TODO")` — no real endpoint works
+yet.
 
 ## Progress log
 
 - **Iteration 1** — hexagonal skeleton: packages, ports, DTOs, controller/entity/mapper stubs,
   test stubs, Docker Compose wiring. Nothing executable yet.
-- **Iteration 2** (this commit) — implemented the core business logic in
+- **Iteration 2** (commit `e214277`) — implemented the core business logic in
   `domain.model.SupplierRecord`: `apply`, `reconstitute`, `accept`, `refuse`, `ban`, `restrict`,
   `promote`, `isVisibleAsCandidate`, `isVisibleAsSupplier`. Also implemented the two value-object
   helper methods `accept()` directly depends on —
@@ -31,7 +33,7 @@ place. The `SupplierRecord` aggregate's state machine is now fully implemented a
       `SchemaManagementException: Schema-validation: missing table [supplier_record]` — confirming
       the (at-the-time) commented-out Flyway migration was a real gap, not just a note in this
       file.
-- **Iteration 3** (this commit) — activated `V1__create_supplier_record_table.sql` (uncommented,
+- **Iteration 3** (commit `7558c5c`) — activated `V1__create_supplier_record_table.sql` (uncommented,
   fully executable). Two column-type fixes were needed to actually pass Hibernate's
   `ddl-auto: validate` against `SupplierRecordEntity`, found only by running the real container,
   not by reading the code:
@@ -47,6 +49,20 @@ place. The `SupplierRecord` aggregate's state machine is now fully implemented a
     seconds`, `curl http://localhost:8080/actuator/health` → `200`. Re-ran `mvn test` in the
     Maven container afterwards to confirm nothing else broke: `Tests run: 74, Failures: 0,
     Errors: 0, Skipped: 61` (same as iteration 2 — no test touches the database yet).
+- **Iteration 4** (this commit) — finished the `domain.model` layer: input-range validation in
+  the `Duns`, `CountryCode` and `AnnualTurnover` compact constructors, and
+  `SupplierStatus#isTerminal`. `CountryCode` is a deliberate design decision: strict validation,
+  no lowercase→uppercase normalization (documented in its javadoc) — a code like `"es"` is
+  rejected rather than silently accepted.
+  - Un-disabled and implemented `DunsTest`, `CountryCodeTest`, `AnnualTurnoverTest`,
+    `SustainabilityRatingTest`, `SupplierStatusTest` (10 tests). `domain.model` is now 100%
+    implemented and 100% tested — 23/23 green.
+  - **Verified in Docker**: `mvn test` in the Maven container → `Tests run: 74, Failures: 0,
+    Errors: 0, Skipped: 51` (down from 61 — exactly the 10 newly-enabled domain tests).
+    `docker compose up --build db backend` → `Started SupplierManagementApplication in 37.719
+    seconds` → `/actuator/health` → `200`, confirming the new constructor validation doesn't
+    break the boot path (nothing yet calls `SupplierRecord.reconstitute` with real DB rows, so
+    this was a compile/wiring check more than a behavioral one).
 
 ## How to start
 
@@ -193,15 +209,16 @@ it.
 
 - [ ] **Architecture and design** — domain has zero framework imports; verify with a build-time
       check (e.g. ArchUnit) before calling this done.
-- [x] **Business logic** — `domain.model.SupplierRecord` state machine implemented (this
-      commit). `[ ]` still open: VO input-range validation (`Duns`, `CountryCode`,
-      `AnnualTurnover` compact constructors), `SupplierStatus#isTerminal`, and every
-      `UnsupportedOperationException("TODO")` in `application.service`/`infrastructure`.
+- [x] **Business logic** — `domain.model` fully implemented: `SupplierRecord` state machine, all
+      value-object validation, `SupplierStatus#isTerminal`. `[ ]` still open: every
+      `UnsupportedOperationException("TODO")` in `application.service`/`infrastructure` — no real
+      endpoint works yet.
 - [ ] **Code quality** — remove now-stale TODO javadoc comments as each piece is implemented; keep
       constructor injection, no field injection.
-- [x] **Testing** — `domain.model.SupplierRecordTest` implemented and green (13/13, verified via
-      `mvn test` in a Maven container — see "Progress log"). `[ ]` still open: un-`@Disabled` the
-      remaining 61 tests as their production code lands; the
+- [x] **Testing** — `domain.model` is 100% tested: 23/23 green (`SupplierRecordTest`, `DunsTest`,
+      `CountryCodeTest`, `AnnualTurnoverTest`, `SustainabilityRatingTest`, `SupplierStatusTest`),
+      verified via `mvn test` in a Maven container — see "Progress log". `[ ]` still open:
+      un-`@Disabled` the remaining 51 tests as their production code lands; the
       `SupplierPersistenceAdapterTest` bonus-calculation test against the README's worked example
       (200k/200k/200k/210k/250k) is the single highest-value test still pending — do not skip it.
 - [ ] **Performance and scalability** — confirm `findPotentialSuppliers` never materializes more

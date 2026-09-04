@@ -19,7 +19,9 @@ public record AnnualTurnover(long value) {
     public static final long MINIMUM_ACCEPTABLE_TURNOVER = 1_000_000L;
 
     public AnnualTurnover {
-        // TODO: validate value >= 0, throw IllegalArgumentException otherwise.
+        if (value < 0) {
+            throw new IllegalArgumentException("annualTurnover must be >= 0, got " + value);
+        }
     }
 
     /**

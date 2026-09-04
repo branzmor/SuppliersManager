@@ -15,6 +15,8 @@ public record Duns(int value) {
     private static final int MAX = 999_999_999;
 
     public Duns {
-        // TODO: validate value is between MIN and MAX (inclusive), throw IllegalArgumentException otherwise.
+        if (value < MIN || value > MAX) {
+            throw new IllegalArgumentException("duns must be between " + MIN + " and " + MAX + " (inclusive), got " + value);
+        }
     }
 }

@@ -1,23 +1,27 @@
 package com.inditex.supplier.domain.model;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+
 /**
- * TODO coverage: valid 2-letter uppercase codes accepted; lowercase, wrong length, or non-alpha
- * input rejected with {@code IllegalArgumentException}. Decide (and test) whether normalization
- * (e.g. lower->upper) is acceptable or strictly rejected — document the choice in the constructor
- * javadoc when implementing.
+ * Valid 2-letter uppercase codes accepted; lowercase, wrong length, or non-alpha input rejected.
+ * Design decision (see {@link CountryCode} javadoc): strict validation, no lower-to-upper
+ * normalization.
  */
 class CountryCodeTest {
 
     @Test
-    @Disabled("TODO: implement - see class javadoc")
     void acceptsValidIsoCode() {
+        assertThat(new CountryCode("ES").isoCode()).isEqualTo("ES");
     }
 
     @Test
-    @Disabled("TODO: implement - see class javadoc")
     void rejectsInvalidIsoCode() {
+        assertThatIllegalArgumentException().isThrownBy(() -> new CountryCode("es"));
+        assertThatIllegalArgumentException().isThrownBy(() -> new CountryCode("ESP"));
+        assertThatIllegalArgumentException().isThrownBy(() -> new CountryCode("E1"));
+        assertThatIllegalArgumentException().isThrownBy(() -> new CountryCode(null));
     }
 }

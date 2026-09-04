@@ -45,6 +45,6 @@ public enum SupplierStatus {
      *     {@link #BANNED}).
      */
     public boolean isTerminal() {
-        throw new UnsupportedOperationException("TODO");
+        return this == REFUSED || this == BANNED;
     }
 }
