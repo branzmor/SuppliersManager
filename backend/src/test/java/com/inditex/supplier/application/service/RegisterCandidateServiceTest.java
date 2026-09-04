@@ -1,14 +1,31 @@
 package com.inditex.supplier.application.service;
 
+import com.inditex.supplier.application.port.in.RegisterCandidateUseCase.RegisterCandidateCommand;
 import com.inditex.supplier.application.port.out.SupplierRepositoryPort;
-import org.junit.jupiter.api.Disabled;
+import com.inditex.supplier.domain.exception.CandidateAlreadyExistsException;
+import com.inditex.supplier.domain.exception.SupplierBannedException;
+import com.inditex.supplier.domain.model.AnnualTurnover;
+import com.inditex.supplier.domain.model.CountryCode;
+import com.inditex.supplier.domain.model.Duns;
+import com.inditex.supplier.domain.model.SupplierRecord;
+import com.inditex.supplier.domain.model.SupplierStatus;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 /**
- * TODO coverage (mock {@link SupplierRepositoryPort}):
+ * Mocks {@link SupplierRepositoryPort}:
  * <ul>
  *   <li>No existing record for DUNS → saves a new {@code CANDIDATE} record.</li>
  *   <li>Existing record in {@code BANNED} → {@code SupplierBannedException}, no save.</li>
@@ -19,21 +36,54 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class RegisterCandidateServiceTest {
 
+    private static final Duns DUNS = new Duns(123_456_789);
+    private static final CountryCode COUNTRY = new CountryCode("ES");
+    private static final AnnualTurnover TURNOVER = new AnnualTurnover(2_000_000L);
+
     @Mock
     private SupplierRepositoryPort supplierRepositoryPort;
 
+    private RegisterCandidateService service;
+
+    @BeforeEach
+    void setUp() {
+        service = new RegisterCandidateService(supplierRepositoryPort);
+    }
+
     @Test
-    @Disabled("TODO: implement - see class javadoc")
     void registersNewCandidateWhenNoExistingRecord() {
+        when(supplierRepositoryPort.findByDuns(DUNS)).thenReturn(Optional.empty());
+        when(supplierRepositoryPort.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        SupplierRecord result = service.register(
+                new RegisterCandidateCommand(DUNS.value(), "Zippers & Buttons", COUNTRY.isoCode(), TURNOVER.value()));
+
+        assertThat(result.status()).isEqualTo(SupplierStatus.CANDIDATE);
+        assertThat(result.duns()).isEqualTo(DUNS);
+        verify(supplierRepositoryPort).save(any());
     }
 
     @Test
-    @Disabled("TODO: implement - see class javadoc")
     void throwsSupplierBannedWhenExistingRecordIsBanned() {
+        SupplierRecord banned = SupplierRecord.reconstitute(DUNS, "Zippers & Buttons", COUNTRY, TURNOVER,
+                SupplierStatus.BANNED, null);
+        when(supplierRepositoryPort.findByDuns(DUNS)).thenReturn(Optional.of(banned));
+
+        assertThatThrownBy(() -> service.register(
+                new RegisterCandidateCommand(DUNS.value(), "Zippers & Buttons", COUNTRY.isoCode(), TURNOVER.value())))
+                .isInstanceOf(SupplierBannedException.class);
+        verify(supplierRepositoryPort, never()).save(any());
     }
 
     @Test
-    @Disabled("TODO: implement - see class javadoc")
     void throwsCandidateAlreadyExistsForAnyOtherExistingStatus() {
+        SupplierRecord refused = SupplierRecord.reconstitute(DUNS, "Zippers & Buttons", COUNTRY, TURNOVER,
+                SupplierStatus.REFUSED, null);
+        when(supplierRepositoryPort.findByDuns(DUNS)).thenReturn(Optional.of(refused));
+
+        assertThatThrownBy(() -> service.register(
+                new RegisterCandidateCommand(DUNS.value(), "Zippers & Buttons", COUNTRY.isoCode(), TURNOVER.value())))
+                .isInstanceOf(CandidateAlreadyExistsException.class);
+        verify(supplierRepositoryPort, never()).save(any());
     }
 }

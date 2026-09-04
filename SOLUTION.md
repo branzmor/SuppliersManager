@@ -1,12 +1,14 @@
 # SOLUTION.md
 
-Status: **All 7 OpenAPI backend endpoints implemented and verified end to end.** `domain.model` is
-fully implemented and 100% unit-tested. Every endpoint works for real against Postgres (and, for
-`accept`, the WireMock country service through a genuinely wired resilience4j Circuit Breaker),
-through every layer (controller → mapper → use case → persistence adapter/external adapter →
-JPA/HTTP → Flyway-migrated table). Remaining work is test coverage (51 `@Disabled` stubs), the
-frontend (0% implemented), and the checklist items below (ArchUnit check, `EXPLAIN`-verified
-indexes, full 4-service `docker compose up`).
+Status: **All 7 OpenAPI backend endpoints implemented and verified end to end.** `domain.model` and
+`application.service` are fully implemented and unit-tested (55 tests green: 23 domain + 26
+service + 6 mapper). Every endpoint works for real against Postgres (and, for `accept`, the
+WireMock country service through a genuinely wired resilience4j Circuit Breaker), through every
+layer (controller → mapper → use case → persistence adapter/external adapter → JPA/HTTP →
+Flyway-migrated table). Remaining test coverage: 19 `@Disabled` stubs (controllers, the
+Testcontainers-backed persistence adapter test, the WireMock-backed country adapter test). Also
+remaining: the frontend (0% implemented) and the checklist items below (ArchUnit check,
+`EXPLAIN`-verified indexes, full 4-service `docker compose up`).
 
 ## Progress log
 
@@ -166,7 +168,7 @@ indexes, full 4-service `docker compose up`).
   - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51`
     (unchanged — verification was manual against Docker again).
   - **All 7 OpenAPI endpoints now implemented except `GET /suppliers/potential`.**
-- **Iteration 9** (this commit) — implemented `GET /suppliers/potential`, the last endpoint:
+- **Iteration 9** (commit `2fa5b3a`) — implemented `GET /suppliers/potential`, the last endpoint:
   `PotentialSupplierProjection` (a Spring Data interface projection, since `score` isn't a real
   column and can't be mapped onto `SupplierRecordEntity`), the native query in
   `SupplierRecordJpaRepository#findPotentialSuppliersRaw` (a `WITH ranked AS (...)` CTE computing
@@ -210,6 +212,26 @@ indexes, full 4-service `docker compose up`).
   - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51`
     (unchanged — verification was manual against Docker again).
   - **All 7 OpenAPI endpoints are now implemented.**
+- **Iteration 10** (this commit) — un-disabled and implemented 32 of the 51 remaining test stubs:
+  all 9 `application.service` test classes (26 tests, pure Mockito — mock
+  `SupplierRepositoryPort`/`CountryCheckPort`, no Spring context, no database) and both
+  `infrastructure.web.mapper` test classes (6 tests, no mocks needed at all). Also implemented
+  `RestrictSupplierService#restrict`/`PromoteSupplierService#promote` (previously
+  `UnsupportedOperationException` stubs) since their tests would otherwise have nothing real to
+  assert against — same shape as `BanSupplierService`/`RefuseCandidateService`, still not wired to
+  any controller (see decision 1b).
+  - Notable coverage: `AcceptCandidateServiceTest#failSafeWhenCountryCheckUnavailable` (mocks
+    `CountryCheckPort` to throw `CountryCheckUnavailableException`, asserts the service converts
+    it to `CandidateNotAcceptableException` and never saves) and
+    `BanSupplierServiceTest#throwsWhenStatusIsActiveNotOnProbation` (regression-proofs the
+    confirmed "ban only from ON_PROBATION" decision) are now permanent automated tests, not just
+    the one-off manual `curl` checks from earlier iterations.
+  - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 19` (down
+    from 51 — all 32 newly-enabled tests passed on the first run). Remaining 19 `@Disabled`:
+    `CandidateControllerTest`/`SupplierControllerTest` (11, need `@WebMvcTest` + `MockMvc`),
+    `SupplierPersistenceAdapterTest` (4, needs Testcontainers PostgreSQL — the single
+    highest-value test still pending, per the checklist),
+    `CountryCheckAdapterTest` (4, needs a WireMock test instance to exercise the Circuit Breaker).
 
 ## How to start
 
@@ -382,17 +404,18 @@ it.
       endpoint level — remaining work is test coverage, code quality, and the frontend.
 - [ ] **Code quality** — remove now-stale TODO javadoc comments as each piece is implemented; keep
       constructor injection, no field injection.
-- [x] **Testing** — `domain.model` is 100% tested: 23/23 green (`SupplierRecordTest`, `DunsTest`,
+- [x] **Testing** — 55/55 green: `domain.model` (23 — `SupplierRecordTest`, `DunsTest`,
       `CountryCodeTest`, `AnnualTurnoverTest`, `SustainabilityRatingTest`, `SupplierStatusTest`),
-      verified via `mvn test` in a Maven container — see "Progress log". All 7 endpoints were
-      verified manually end-to-end via `curl`/`psql`/stopping containers against real Postgres
-      and WireMock instead of automated tests (the corresponding controller/service/mapper/
-      adapter test stubs remain `@Disabled` — un-disabling them is still open). `[ ]` still
-      open: un-`@Disabled` the remaining 51 tests as their
-      production code lands; the `SupplierPersistenceAdapterTest` bonus-calculation test against
-      the README's worked example is the single highest-value test still pending (the manual
-      `curl` verification in iteration 9 covers the same ground but isn't a regression-proof
-      automated test) — do not skip it.
+      all 9 `application.service` classes (26), both web mapper classes (6), all verified via
+      `mvn test` in a Maven container — see "Progress log", iteration 10. All 7 endpoints were
+      additionally verified manually end-to-end via `curl`/`psql`/stopping containers against real
+      Postgres and WireMock. `[ ]` still open: 19 `@Disabled` stubs —
+      `CandidateControllerTest`/`SupplierControllerTest` (11, need `@WebMvcTest`),
+      `CountryCheckAdapterTest` (4, needs WireMock), and the single highest-value test still
+      pending, `SupplierPersistenceAdapterTest` (4, needs Testcontainers PostgreSQL) — its
+      bonus-calculation test against the README's worked example is currently only proven by the
+      manual `curl` verification in iteration 9, which isn't a regression-proof automated test —
+      do not skip it.
 - [ ] **Performance and scalability** — confirm `findPotentialSuppliers` never materializes more
       than one page of entities (it doesn't — verified by reading the query, which does everything
       in SQL); run `EXPLAIN` on the final query against a seeded 100k+ row table (still open) and
