@@ -8,6 +8,7 @@ import com.inditex.supplier.domain.exception.SupplierBannedException;
 import com.inditex.supplier.domain.exception.SupplierNotBannableException;
 import com.inditex.supplier.domain.exception.SupplierRecordNotFoundException;
 import com.inditex.supplier.infrastructure.web.dto.ErrorResponseDto;
+import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -109,5 +110,21 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ErrorResponseDto> handleIllegalArgument(IllegalArgumentException ex) {
         return ResponseEntity.badRequest().body(new ErrorResponseDto(ex.getMessage()));
+    }
+
+    /**
+     * Bean Validation on {@code @RequestParam}/{@code @PathVariable} (class-level
+     * {@code @Validated}, e.g. {@code SupplierController#potentialSuppliers}'s {@code rate}/
+     * {@code limit}/{@code offset}) fails with this exception via
+     * {@code MethodValidationInterceptor}, not {@link MethodArgumentNotValidException} — found by
+     * actually calling the endpoint with an out-of-range {@code rate}/{@code limit}/{@code offset}
+     * and getting an uncaught 500 instead of the OpenAPI-documented 400.
+     */
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ErrorResponseDto> handleConstraintViolation(ConstraintViolationException ex) {
+        String message = ex.getConstraintViolations().stream()
+                .map(violation -> violation.getPropertyPath() + " " + violation.getMessage())
+                .collect(Collectors.joining(", "));
+        return ResponseEntity.badRequest().body(new ErrorResponseDto(message));
     }
 }

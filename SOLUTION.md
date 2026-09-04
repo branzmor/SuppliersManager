@@ -1,12 +1,12 @@
 # SOLUTION.md
 
-Status: **`domain` layer complete; 6 of 7 endpoints working end to end**. `domain.model` is fully
-implemented and 100% unit-tested. Every OpenAPI endpoint except `GET /suppliers/potential` works
-for real against Postgres (and, for `accept`, the WireMock country service through a genuinely
-wired resilience4j Circuit Breaker), through every layer (controller → mapper → use case →
-persistence adapter/external adapter → JPA/HTTP → Flyway-migrated table). Only
-`GET /suppliers/potential` remains — it needs the SQL scoring/bonus/pagination query and still
-throws `UnsupportedOperationException` (500).
+Status: **All 7 OpenAPI backend endpoints implemented and verified end to end.** `domain.model` is
+fully implemented and 100% unit-tested. Every endpoint works for real against Postgres (and, for
+`accept`, the WireMock country service through a genuinely wired resilience4j Circuit Breaker),
+through every layer (controller → mapper → use case → persistence adapter/external adapter →
+JPA/HTTP → Flyway-migrated table). Remaining work is test coverage (51 `@Disabled` stubs), the
+frontend (0% implemented), and the checklist items below (ArchUnit check, `EXPLAIN`-verified
+indexes, full 4-service `docker compose up`).
 
 ## Progress log
 
@@ -129,7 +129,7 @@ throws `UnsupportedOperationException` (500).
     - `POST /suppliers/{duns}/ban` on a DUNS that never existed → `404`.
   - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51`
     (unchanged — verification was manual against Docker again).
-- **Iteration 8** (this commit) — implemented `accept`, the last piece requiring the external
+- **Iteration 8** (commit `cc6b491`) — implemented `accept`, the last piece requiring the external
   country service: `CountryClient` (a `RestClient` calling `GET /countries/{country}`, base URL
   from `country-service.base-url`), `CountryCheckAdapter` (wraps the client in
   `@CircuitBreaker(name = "countryService")`; its fallback method always throws
@@ -166,6 +166,50 @@ throws `UnsupportedOperationException` (500).
   - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51`
     (unchanged — verification was manual against Docker again).
   - **All 7 OpenAPI endpoints now implemented except `GET /suppliers/potential`.**
+- **Iteration 9** (this commit) — implemented `GET /suppliers/potential`, the last endpoint:
+  `PotentialSupplierProjection` (a Spring Data interface projection, since `score` isn't a real
+  column and can't be mapped onto `SupplierRecordEntity`), the native query in
+  `SupplierRecordJpaRepository#findPotentialSuppliersRaw` (a `WITH ranked AS (...)` CTE computing
+  `DENSE_RANK() OVER (PARTITION BY country ORDER BY annual_turnover)` for the bonus, then the
+  outer query applies the `annual_turnover > :rate` eligibility filter, the score formula, and
+  `ORDER BY score DESC LIMIT/OFFSET`) plus its companion `countPotentialSuppliers`,
+  `SupplierPersistenceAdapter#findPotentialSuppliers` (maps projection rows to `ScoredSupplier`),
+  `GetPotentialSuppliersService`, `SupplierWebMapper#toPotentialResponseDto`, and the controller.
+  **Confirmed decision on an ambiguity the README doesn't resolve**: the small-supplier bonus
+  ranking is computed over ALL `ACTIVE`/`ON_PROBATION` suppliers in a country — never restricted
+  to the current request's `rate`-eligible subset. The bonus is a stable, rate-independent trait
+  of "being one of the two smallest suppliers in your country," which best matches the README's
+  worked example (5 suppliers in a country, no rate mentioned at all). Documented in the
+  repository's javadoc so this isn't silently "fixed" into the other interpretation later.
+  `CANDIDATE`/`REFUSED` (no rating yet) and `BANNED` are excluded from the ranking population
+  itself, not just from the final eligible result — they aren't "suppliers" in the first place.
+  - **Verified against real Postgres — the exact README worked example, not just an analogous
+    case**: seeded 5 rows for a country (`DE`) matching the worked example verbatim
+    (200k/200k/200k/210k/250k, all rating A) alongside the pre-existing test data from earlier
+    iterations. `GET /suppliers/potential?rate=250&limit=10` returned all 9 eligible suppliers
+    across 3 countries, sorted by score descending, and the DE scores matched hand-calculated
+    values exactly: the three 200k rows and the 210k row all scored `25000`/`26250` (bonus
+    applied, `1.25×`), the 250k row scored `25000` with no bonus (`1×`) — precisely "s1, s2, s3,
+    s4 receive the bonus" per the README, s5 does not.
+    - Pagination verified: `limit=3&offset=0` then `limit=3&offset=3` returned two disjoint
+      3-row pages summing correctly against `total: 9`.
+    - **The confirmed rate-independence decision, verified empirically**: re-queried with
+      `rate=205000` (which excludes the three 200k rows from the eligible result, since
+      `200000 > 205000` is false) and confirmed the 210k row's score was still `26250` — the
+      bonus survived even though the rows it was ranked against were no longer all present in
+      this particular result page, proving the ranking is computed independently of `rate` as
+      decided, not recomputed per-query over only the visible subset.
+    - Query-param validation (`rate < 250`, `limit > 10`, `offset < 0`) — **found and fixed a real
+      bug here**: `@Validated` at the controller class level with `@Min`/`@Max` on
+      `@RequestParam`s throws `jakarta.validation.ConstraintViolationException` via
+      `MethodValidationInterceptor`, not `MethodArgumentNotValidException` — this had no handler
+      and was silently falling through to Spring Boot's default 500 error page instead of the
+      OpenAPI-documented 400. Added a `ConstraintViolationException` handler to
+      `GlobalExceptionHandler`; re-verified all three invalid-param cases now return 400 with the
+      violation message, and the happy path still works.
+  - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51`
+    (unchanged — verification was manual against Docker again).
+  - **All 7 OpenAPI endpoints are now implemented.**
 
 ## How to start
 
@@ -277,13 +321,29 @@ bonus = 1.25 if turnover is among the 2 lowest UNIQUE turnovers in its country, 
 ```
 
 At the stated 100k–1,000,000 supplier volume (README §6), this cannot be computed by loading rows
-into the JVM. `SupplierRepositoryPort#findPotentialSuppliers` is contracted to do everything in
-one query: filter (`annual_turnover > rate`, `status != BANNED`), bonus via
-`DENSE_RANK() OVER (PARTITION BY country ORDER BY annual_turnover)` to find the two lowest unique
-turnovers per country, score computation, `ORDER BY score DESC`, and `LIMIT/OFFSET`. See
-`infrastructure.persistence.repository.SupplierRecordJpaRepository` (native `@Query` stub) and the
-proposed indexes in `V1__create_supplier_record_table.sql` (`(country, annual_turnover)` for the
-bonus window function, `(status, annual_turnover)` for the filter/order).
+into the JVM. **Implemented** (iteration 9) as a single native query in
+`SupplierRecordJpaRepository#findPotentialSuppliersRaw`: a `WITH ranked AS (...)` CTE computes
+`DENSE_RANK() OVER (PARTITION BY country ORDER BY annual_turnover)` over the full
+`ACTIVE`/`ON_PROBATION` population per country, then the outer query filters
+`annual_turnover > :rate`, computes the score, and applies `ORDER BY score DESC LIMIT/OFFSET`.
+Results are read via `PotentialSupplierProjection` (a Spring Data interface projection — `score`
+isn't a real column, so it can't be mapped onto `SupplierRecordEntity`). See the proposed indexes
+in `V1__create_supplier_record_table.sql` (`(country, annual_turnover)` for the bonus window
+function, `(status, annual_turnover)` for the filter/order) — not yet benchmarked with `EXPLAIN`
+against a large seeded dataset (still open, see checklist).
+
+**Confirmed decision on an ambiguity the README leaves open**: "the two lowest unique annual
+turnovers in their country" doesn't say whether that ranking is computed over every
+non-disqualified supplier of the country, or only over the subset that happens to be eligible for
+the specific `rate` being queried. **Decided: the former** — the bonus ranking runs over ALL
+`ACTIVE`/`ON_PROBATION` suppliers of a country regardless of `rate`, making it a stable trait of
+the supplier ("one of the two smallest in your country") rather than something that flickers on
+and off depending on what a caller happens to query. The README's worked example (5 suppliers in
+a country, no `rate` mentioned at all) reads far more naturally under this interpretation.
+Verified empirically: querying with a `rate` that excludes some of the ranked rows from the
+result still preserves the correct bonus on the rows that remain — see "Progress log", iteration
+9. `CANDIDATE`/`REFUSED` are excluded from the ranking population itself (not just the final
+result), since they aren't suppliers and have no rating to score at all.
 
 ### 5. Known gap — 422 on `POST /candidates`
 
@@ -312,28 +372,31 @@ it.
 
 - [ ] **Architecture and design** — domain has zero framework imports; verify with a build-time
       check (e.g. ArchUnit) before calling this done.
-- [x] **Business logic** — `domain.model` fully implemented; 6 of 7 endpoints
-      (everything except `potential-suppliers`) work end to end for real (verified against
-      Postgres and, for `accept`, the WireMock country service through a genuinely wired Circuit
-      Breaker — see "Progress log", iterations 5-8), including the internal→external status
-      mapping, the confirmed "ban only from ON_PROBATION" decision, and the country-check
-      fail-safe (verified by actually stopping `country-service` mid-test), all empirically
-      confirmed, not just unit-tested. `[ ]` still open: `potential-suppliers` (needs the SQL
-      scoring/bonus/pagination query — the last remaining endpoint).
+- [x] **Business logic** — `domain.model` fully implemented; **all 7 OpenAPI endpoints** work end
+      to end for real (verified against Postgres and, for `accept`, the WireMock country service
+      through a genuinely wired Circuit Breaker — see "Progress log", iterations 5-9), including
+      the internal→external status mapping, the confirmed "ban only from ON_PROBATION" decision,
+      the country-check fail-safe (verified by actually stopping `country-service` mid-test), and
+      the potential-suppliers scoring/bonus formula matched exactly against the README's worked
+      example, all empirically confirmed, not just unit-tested. `[ ]` still open: nothing at the
+      endpoint level — remaining work is test coverage, code quality, and the frontend.
 - [ ] **Code quality** — remove now-stale TODO javadoc comments as each piece is implemented; keep
       constructor injection, no field injection.
 - [x] **Testing** — `domain.model` is 100% tested: 23/23 green (`SupplierRecordTest`, `DunsTest`,
       `CountryCodeTest`, `AnnualTurnoverTest`, `SustainabilityRatingTest`, `SupplierStatusTest`),
-      verified via `mvn test` in a Maven container — see "Progress log". The 6 working endpoints
-      were verified manually end-to-end via `curl`/`psql`/stopping containers against real
-      Postgres and WireMock instead of automated tests (the corresponding controller/service/
-      mapper/adapter test stubs remain `@Disabled` — un-disabling them is still open). `[ ]` still
+      verified via `mvn test` in a Maven container — see "Progress log". All 7 endpoints were
+      verified manually end-to-end via `curl`/`psql`/stopping containers against real Postgres
+      and WireMock instead of automated tests (the corresponding controller/service/mapper/
+      adapter test stubs remain `@Disabled` — un-disabling them is still open). `[ ]` still
       open: un-`@Disabled` the remaining 51 tests as their
       production code lands; the `SupplierPersistenceAdapterTest` bonus-calculation test against
-      the README's worked example (200k/200k/200k/210k/250k) is the single highest-value test
-      still pending — do not skip it.
+      the README's worked example is the single highest-value test still pending (the manual
+      `curl` verification in iteration 9 covers the same ground but isn't a regression-proof
+      automated test) — do not skip it.
 - [ ] **Performance and scalability** — confirm `findPotentialSuppliers` never materializes more
-      than one page of entities; run `EXPLAIN` on the final query against a seeded 100k+ row table.
+      than one page of entities (it doesn't — verified by reading the query, which does everything
+      in SQL); run `EXPLAIN` on the final query against a seeded 100k+ row table (still open) and
+      confirm the proposed indexes in `V1__create_supplier_record_table.sql` are actually used.
 - [ ] **Frontend components** — every component under `src/components` currently returns `null`;
       confirm loading/error/empty states are reachable and distinct once wired.
 - [x] **Docker Compose** — `docker compose up --build db backend` boots cleanly end to end

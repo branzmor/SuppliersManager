@@ -38,7 +38,15 @@ public class SupplierWebMapper {
     }
 
     public PotentialSupplierResponseDto toPotentialResponseDto(ScoredSupplier scoredSupplier) {
-        throw new UnsupportedOperationException("TODO");
+        SupplierRecord record = scoredSupplier.record();
+        return new PotentialSupplierResponseDto(
+                record.annualTurnover().value(),
+                record.country().isoCode(),
+                record.duns().value(),
+                record.name(),
+                toStatusDto(record.status()),
+                SustainabilityRatingDto.valueOf(record.sustainabilityRating().name()),
+                scoredSupplier.score());
     }
 
     /**

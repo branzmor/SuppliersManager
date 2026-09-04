@@ -1,6 +1,7 @@
 package com.inditex.supplier.application.service;
 
 import com.inditex.supplier.application.port.in.GetPotentialSuppliersUseCase;
+import com.inditex.supplier.application.port.out.PotentialSuppliersPage;
 import com.inditex.supplier.application.port.out.SupplierRepositoryPort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +22,8 @@ public class GetPotentialSuppliersService implements GetPotentialSuppliersUseCas
     @Override
     @Transactional(readOnly = true)
     public Result getPotentialSuppliers(Query query) {
-        throw new UnsupportedOperationException("TODO");
+        PotentialSuppliersPage page = supplierRepositoryPort.findPotentialSuppliers(
+                query.rate(), query.limit(), query.offset());
+        return new Result(page.suppliers(), query.limit(), query.offset(), page.totalCount());
     }
 }

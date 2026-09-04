@@ -5,6 +5,8 @@ import com.inditex.supplier.application.port.in.GetPotentialSuppliersUseCase;
 import com.inditex.supplier.application.port.in.GetSupplierUseCase;
 import com.inditex.supplier.domain.exception.SupplierRecordNotFoundException;
 import com.inditex.supplier.domain.model.Duns;
+import com.inditex.supplier.infrastructure.web.dto.PaginationDto;
+import com.inditex.supplier.infrastructure.web.dto.PotentialSupplierResponseDto;
 import com.inditex.supplier.infrastructure.web.dto.PotentialSuppliersResponseDto;
 import com.inditex.supplier.infrastructure.web.dto.SupplierResponseDto;
 import com.inditex.supplier.infrastructure.web.mapper.SupplierWebMapper;
@@ -19,6 +21,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.validation.annotation.Validated;
+
+import java.util.List;
 
 /**
  * REST controller for the {@code supplier} tag of the main OpenAPI spec.
@@ -57,8 +61,13 @@ public class SupplierController {
             @RequestParam @Min(250) long rate,
             @RequestParam(required = false, defaultValue = "10") @Min(1) @Max(10) int limit,
             @RequestParam(required = false, defaultValue = "0") @Min(0) int offset) {
-        // TODO: call getPotentialSuppliersUseCase, map ScoredSupplier list + pagination -> response DTO.
-        throw new UnsupportedOperationException("TODO");
+        GetPotentialSuppliersUseCase.Result result = getPotentialSuppliersUseCase.getPotentialSuppliers(
+                new GetPotentialSuppliersUseCase.Query(rate, limit, offset));
+        List<PotentialSupplierResponseDto> data = result.suppliers().stream()
+                .map(supplierWebMapper::toPotentialResponseDto)
+                .toList();
+        PaginationDto pagination = new PaginationDto(result.limit(), result.offset(), (int) result.total());
+        return new PotentialSuppliersResponseDto(data, pagination);
     }
 
     @GetMapping("/{duns}")
