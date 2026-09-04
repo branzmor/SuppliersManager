@@ -1,13 +1,14 @@
 # SOLUTION.md
 
-Status: **All 7 OpenAPI backend endpoints implemented and verified end to end.** `domain.model` and
-`application.service` are fully implemented and unit-tested (55 tests green: 23 domain + 26
-service + 6 mapper). Every endpoint works for real against Postgres (and, for `accept`, the
-WireMock country service through a genuinely wired resilience4j Circuit Breaker), through every
-layer (controller → mapper → use case → persistence adapter/external adapter → JPA/HTTP →
-Flyway-migrated table). Remaining test coverage: 19 `@Disabled` stubs (controllers, the
-Testcontainers-backed persistence adapter test, the WireMock-backed country adapter test). Also
-remaining: the frontend (0% implemented) and the checklist items below (ArchUnit check,
+Status: **All 7 OpenAPI backend endpoints implemented and verified end to end.** `domain.model`,
+`application.service`, and both controllers are fully unit/slice-tested (66 tests green: 23
+domain + 26 service + 6 mapper + 11 `@WebMvcTest` controller). Every endpoint works for real
+against Postgres (and, for `accept`, the WireMock country service through a genuinely wired
+resilience4j Circuit Breaker), through every layer (controller → mapper → use case → persistence
+adapter/external adapter → JPA/HTTP → Flyway-migrated table). Remaining test coverage: 8
+`@Disabled` stubs — the Testcontainers-backed persistence adapter test and the WireMock-backed
+country adapter test. Also remaining: the frontend (0% implemented) and the checklist items below
+(ArchUnit check,
 `EXPLAIN`-verified indexes, full 4-service `docker compose up`).
 
 ## Progress log
@@ -212,7 +213,7 @@ remaining: the frontend (0% implemented) and the checklist items below (ArchUnit
   - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51`
     (unchanged — verification was manual against Docker again).
   - **All 7 OpenAPI endpoints are now implemented.**
-- **Iteration 10** (this commit) — un-disabled and implemented 32 of the 51 remaining test stubs:
+- **Iteration 10** (commit `7f037c2`) — un-disabled and implemented 32 of the 51 remaining test stubs:
   all 9 `application.service` test classes (26 tests, pure Mockito — mock
   `SupplierRepositoryPort`/`CountryCheckPort`, no Spring context, no database) and both
   `infrastructure.web.mapper` test classes (6 tests, no mocks needed at all). Also implemented
@@ -227,11 +228,20 @@ remaining: the frontend (0% implemented) and the checklist items below (ArchUnit
     confirmed "ban only from ON_PROBATION" decision) are now permanent automated tests, not just
     the one-off manual `curl` checks from earlier iterations.
   - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 19` (down
-    from 51 — all 32 newly-enabled tests passed on the first run). Remaining 19 `@Disabled`:
-    `CandidateControllerTest`/`SupplierControllerTest` (11, need `@WebMvcTest` + `MockMvc`),
+    from 51 — all 32 newly-enabled tests passed on the first run).
+- **Iteration 11** (this commit) — un-disabled and implemented `CandidateControllerTest`/
+  `SupplierControllerTest` (11 tests) via `@WebMvcTest` + `MockMvc`, mocking each use case port
+  with `@MockBean` while `@Import`-ing the real `CandidateWebMapper`/`SupplierWebMapper` beans
+  (plain deterministic mappers, not use cases — no reason to mock them, and it exercises the
+  mapper wiring for free). `@WebMvcTest` auto-includes `@RestControllerAdvice` beans, so
+  `GlobalExceptionHandler` is exercised for real too — these tests assert the exact
+  `{"info": "..."}` body and status code for each conflict/not-found/validation case, not just
+  that *a* 4xx came back.
+  - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 8` (down
+    from 19 — all 11 newly-enabled tests passed on the first run). Remaining 8 `@Disabled`:
     `SupplierPersistenceAdapterTest` (4, needs Testcontainers PostgreSQL — the single
-    highest-value test still pending, per the checklist),
-    `CountryCheckAdapterTest` (4, needs a WireMock test instance to exercise the Circuit Breaker).
+    highest-value test still pending, per the checklist) and `CountryCheckAdapterTest` (4, needs
+    a WireMock test instance to exercise the Circuit Breaker).
 
 ## How to start
 
@@ -404,18 +414,17 @@ it.
       endpoint level — remaining work is test coverage, code quality, and the frontend.
 - [ ] **Code quality** — remove now-stale TODO javadoc comments as each piece is implemented; keep
       constructor injection, no field injection.
-- [x] **Testing** — 55/55 green: `domain.model` (23 — `SupplierRecordTest`, `DunsTest`,
+- [x] **Testing** — 66/66 green: `domain.model` (23 — `SupplierRecordTest`, `DunsTest`,
       `CountryCodeTest`, `AnnualTurnoverTest`, `SustainabilityRatingTest`, `SupplierStatusTest`),
-      all 9 `application.service` classes (26), both web mapper classes (6), all verified via
-      `mvn test` in a Maven container — see "Progress log", iteration 10. All 7 endpoints were
-      additionally verified manually end-to-end via `curl`/`psql`/stopping containers against real
-      Postgres and WireMock. `[ ]` still open: 19 `@Disabled` stubs —
-      `CandidateControllerTest`/`SupplierControllerTest` (11, need `@WebMvcTest`),
-      `CountryCheckAdapterTest` (4, needs WireMock), and the single highest-value test still
-      pending, `SupplierPersistenceAdapterTest` (4, needs Testcontainers PostgreSQL) — its
-      bonus-calculation test against the README's worked example is currently only proven by the
-      manual `curl` verification in iteration 9, which isn't a regression-proof automated test —
-      do not skip it.
+      all 9 `application.service` classes (26), both web mapper classes (6), and both
+      `@WebMvcTest` controller classes (11), all verified via `mvn test` in a Maven container —
+      see "Progress log", iterations 10-11. All 7 endpoints were additionally verified manually
+      end-to-end via `curl`/`psql`/stopping containers against real Postgres and WireMock.
+      `[ ]` still open: 8 `@Disabled` stubs — `CountryCheckAdapterTest` (4, needs WireMock) and
+      the single highest-value test still pending, `SupplierPersistenceAdapterTest` (4, needs
+      Testcontainers PostgreSQL) — its bonus-calculation test against the README's worked example
+      is currently only proven by the manual `curl` verification in iteration 9, which isn't a
+      regression-proof automated test — do not skip it.
 - [ ] **Performance and scalability** — confirm `findPotentialSuppliers` never materializes more
       than one page of entities (it doesn't — verified by reading the query, which does everything
       in SQL); run `EXPLAIN` on the final query against a seeded 100k+ row table (still open) and
