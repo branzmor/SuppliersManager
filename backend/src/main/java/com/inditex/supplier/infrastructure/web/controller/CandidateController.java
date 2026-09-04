@@ -78,8 +78,8 @@ public class CandidateController {
     }
 
     @PostMapping("/{duns}/refuse")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
     public void refuseCandidate(@PathVariable int duns) {
-        // TODO: call refuseCandidateUseCase, return 204.
-        throw new UnsupportedOperationException("TODO");
+        refuseCandidateUseCase.refuse(duns);
     }
 }

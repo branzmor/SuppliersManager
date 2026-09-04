@@ -10,11 +10,13 @@ import com.inditex.supplier.infrastructure.web.dto.SupplierResponseDto;
 import com.inditex.supplier.infrastructure.web.mapper.SupplierWebMapper;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.validation.annotation.Validated;
 
@@ -67,8 +69,8 @@ public class SupplierController {
     }
 
     @PostMapping("/{duns}/ban")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
     public void banSupplier(@PathVariable int duns) {
-        // TODO: call banSupplierUseCase, return 204.
-        throw new UnsupportedOperationException("TODO");
+        banSupplierUseCase.ban(duns);
     }
 }

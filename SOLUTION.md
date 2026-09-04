@@ -1,11 +1,12 @@
 # SOLUTION.md
 
-Status: **`domain` layer complete; 3 of 7 endpoints working end to end**. `domain.model` is fully
-implemented and 100% unit-tested. `POST /candidates`, `GET /candidates/{duns}` and
-`GET /suppliers/{duns}` all work for real against Postgres, through every layer (controller →
-mapper → use case → persistence adapter → JPA → Flyway-migrated table). Still `TODO`: accept,
-refuse, ban, potential-suppliers, and the external country-service Circuit Breaker — those
-endpoints still throw `UnsupportedOperationException` (500).
+Status: **`domain` layer complete; 5 of 7 endpoints working end to end**. `domain.model` is fully
+implemented and 100% unit-tested. `POST /candidates`, `GET /candidates/{duns}`,
+`GET /suppliers/{duns}`, `POST /candidates/{duns}/refuse` and `POST /suppliers/{duns}/ban` all
+work for real against Postgres, through every layer (controller → mapper → use case → persistence
+adapter → JPA → Flyway-migrated table). Still `TODO`: `POST /candidates/{duns}/accept` (needs the
+still-unstarted `CountryCheckAdapter`/Circuit Breaker) and `GET /suppliers/potential` (needs the
+SQL scoring query) — those two still throw `UnsupportedOperationException` (500).
 
 ## Progress log
 
@@ -87,7 +88,7 @@ endpoints still throw `UnsupportedOperationException` (500).
   - `mvn test` in the Maven container still green after the compile fix (protected constructor):
     `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51` (unchanged — no test stub was un-disabled
     this iteration; the verification was manual end-to-end against Docker instead).
-- **Iteration 6** (this commit) — implemented the read paths: `GetCandidateService`/
+- **Iteration 6** (commit `7714183`) — implemented the read paths: `GetCandidateService`/
   `GetSupplierService` (`findByDuns` + the visibility filter already on `SupplierRecord`),
   `SupplierWebMapper#toResponseDto`/`#toStatusDto` (the internal→external status mapping —
   `CANDIDATE`/`REFUSED` throw `IllegalStateException` if they ever reach it, since upstream
@@ -106,6 +107,26 @@ endpoints still throw `UnsupportedOperationException` (500).
     `UPDATE ... SET status='ON_PROBATION'` → `"status":"Active"` (the whole reason this
     internal/external split exists — README §"Integrity Rules": "The API does not distinguish
     between Active and On Probation").
+  - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51`
+    (unchanged — verification was manual against Docker again).
+- **Iteration 7** (this commit) — implemented `refuse`/`ban`: `RefuseCandidateService`
+  (find-or-404 + `SupplierRecord#refuse` + save) and `BanSupplierService` (same shape with
+  `#ban`), the `POST /candidates/{duns}/refuse` and `POST /suppliers/{duns}/ban` controller
+  methods (both now explicitly `@ResponseStatus(NO_CONTENT)` — a void controller method defaults
+  to 200, not 204, without it), and the two remaining conflict handlers in
+  `GlobalExceptionHandler` (`CandidateNotRefusableException`, `SupplierNotBannableException`).
+  - **Verified against real Postgres**, covering every branch, including the two decisions most
+    likely to be miscoded:
+    - `refuse`: `CANDIDATE` → `204`; `GET` right after → still `200` (REFUSED stays visible as a
+      candidate); refusing the same DUNS again → `409 "Candidate can not be refused"` — this is
+      also the empirical proof of the no-reapply decision, since there is no other way back into
+      `CANDIDATE` from `REFUSED`.
+    - `ban`: from `ON_PROBATION` → `204`, then `GET /suppliers/{duns}` → `"status":"Disqualified"`;
+      banning again → `409`. **Critically, from `ACTIVE`** (set via `psql`, since `accept()` isn't
+      wired to a controller yet) → `409 "Supplier can not be banned"`, and a follow-up `GET`
+      confirms the record is untouched (still `"status":"Active"`) — confirms the confirmed
+      project decision that `ban()` is `ON_PROBATION`-only, not `ACTIVE`-or-`ON_PROBATION`.
+    - `POST /suppliers/{duns}/ban` on a DUNS that never existed → `404`.
   - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51`
     (unchanged — verification was manual against Docker again).
 
@@ -254,12 +275,12 @@ it.
 
 - [ ] **Architecture and design** — domain has zero framework imports; verify with a build-time
       check (e.g. ArchUnit) before calling this done.
-- [x] **Business logic** — `domain.model` fully implemented; `POST /candidates`,
-      `GET /candidates/{duns}` and `GET /suppliers/{duns}` all work end to end for real (verified
-      against Postgres — see "Progress log", iterations 5-6), including the internal→external
-      status mapping empirically confirmed for all 3 internal statuses that can reach it. `[ ]`
-      still open: `accept`, `refuse`, `ban`, `potential-suppliers`, and the country-service
-      Circuit Breaker.
+- [x] **Business logic** — `domain.model` fully implemented; 5 of 7 endpoints
+      (`POST /candidates`, both GETs, `refuse`, `ban`) work end to end for real (verified against
+      Postgres — see "Progress log", iterations 5-7), including the internal→external status
+      mapping and the confirmed "ban only from ON_PROBATION, never ACTIVE" decision, both
+      empirically confirmed, not just unit-tested. `[ ]` still open: `accept` (needs the
+      country-service Circuit Breaker) and `potential-suppliers` (needs the SQL scoring query).
 - [ ] **Code quality** — remove now-stale TODO javadoc comments as each piece is implemented; keep
       constructor injection, no field injection.
 - [x] **Testing** — `domain.model` is 100% tested: 23/23 green (`SupplierRecordTest`, `DunsTest`,

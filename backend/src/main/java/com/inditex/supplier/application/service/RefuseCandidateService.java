@@ -2,6 +2,9 @@ package com.inditex.supplier.application.service;
 
 import com.inditex.supplier.application.port.in.RefuseCandidateUseCase;
 import com.inditex.supplier.application.port.out.SupplierRepositoryPort;
+import com.inditex.supplier.domain.exception.SupplierRecordNotFoundException;
+import com.inditex.supplier.domain.model.Duns;
+import com.inditex.supplier.domain.model.SupplierRecord;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +24,10 @@ public class RefuseCandidateService implements RefuseCandidateUseCase {
     @Override
     @Transactional
     public void refuse(int duns) {
-        throw new UnsupportedOperationException("TODO");
+        Duns candidateDuns = new Duns(duns);
+        SupplierRecord record = supplierRepositoryPort.findByDuns(candidateDuns)
+                .orElseThrow(() -> new SupplierRecordNotFoundException(candidateDuns));
+        record.refuse();
+        supplierRepositoryPort.save(record);
     }
 }

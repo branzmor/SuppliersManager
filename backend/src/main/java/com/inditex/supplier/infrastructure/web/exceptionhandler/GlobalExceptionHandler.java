@@ -71,12 +71,12 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(CandidateNotRefusableException.class)
     public ResponseEntity<ErrorResponseDto> handleCandidateNotRefusable(CandidateNotRefusableException ex) {
-        throw new UnsupportedOperationException("TODO");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponseDto("Candidate can not be refused"));
     }
 
     @ExceptionHandler(SupplierNotBannableException.class)
     public ResponseEntity<ErrorResponseDto> handleSupplierNotBannable(SupplierNotBannableException ex) {
-        throw new UnsupportedOperationException("TODO");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponseDto("Supplier can not be banned"));
     }
 
     @ExceptionHandler(CountryCheckUnavailableException.class)
