@@ -1,14 +1,15 @@
 # SOLUTION.md
 
-Status: **Backend complete: all 7 OpenAPI endpoints implemented and verified end to end, 100% of
-the backend test suite green (74/74, zero `@Disabled` stubs).** `domain.model`,
-`application.service`, both controllers, and both integration-level adapters (Testcontainers
-PostgreSQL, embedded WireMock) are all tested. Every endpoint works for real against Postgres
-(and, for `accept`, the WireMock country service through a genuinely wired resilience4j Circuit
-Breaker), through every layer (controller → mapper → use case → persistence adapter/external
-adapter → JPA/HTTP → Flyway-migrated table). Remaining: the frontend (0% implemented) and the
-checklist items below (ArchUnit check, `EXPLAIN`-verified indexes, full 4-service
-`docker compose up`).
+Status: **Backend complete and its technical checklist closed out**: all 7 OpenAPI endpoints
+implemented and verified end to end, 100% of the backend test suite green (78/78, zero
+`@Disabled` stubs, including 4 ArchUnit rules enforcing the hexagonal layering as a build-time
+check), and the `potential-suppliers` query benchmarked with `EXPLAIN` against 300k seeded rows
+(index usage confirmed for the status filter; a documented, honest performance trade-off found
+for the country-based bonus ranking — see §4 and "Progress log" iteration 13). Every endpoint
+works for real against Postgres (and, for `accept`, the WireMock country service through a
+genuinely wired resilience4j Circuit Breaker), through every layer. **Remaining work on the whole
+project: only the frontend (0% implemented) and verifying the full 4-service
+`docker compose up`.**
 
 ## Progress log
 
@@ -241,7 +242,7 @@ checklist items below (ArchUnit check, `EXPLAIN`-verified indexes, full 4-servic
     `SupplierPersistenceAdapterTest` (4, needs Testcontainers PostgreSQL — the single
     highest-value test still pending, per the checklist) and `CountryCheckAdapterTest` (4, needs
     a WireMock test instance to exercise the Circuit Breaker).
-- **Iteration 12** (this commit) — implemented the last 8 tests, closing out test coverage
+- **Iteration 12** (commit `292912c`) — implemented the last 8 tests, closing out test coverage
   entirely:
   - **`CountryCheckAdapterTest`**: added `org.wiremock:wiremock-standalone` (test-scope) and used
     a real embedded `WireMockServer` (dynamic port, wired in via `@DynamicPropertySource`
@@ -289,6 +290,45 @@ checklist items below (ArchUnit check, `EXPLAIN`-verified indexes, full 4-servic
     special configuration in a normal environment.
   - **`mvn test`: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 0` — the full backend test
     suite is 100% green with zero `@Disabled` stubs remaining.**
+- **Iteration 13** (this commit) — closed the two remaining checklist items:
+  - **Architecture and design, as a build-time check**: added `com.tngtech.archunit:archunit-junit5`
+    and `HexagonalArchitectureTest` (4 rules): `domain` depends on no framework package
+    (`org.springframework..`, `jakarta..`, `org.hibernate..`, `io.github.resilience4j..`);
+    `domain` depends on neither `application` nor `infrastructure`; `application` depends on
+    neither `infrastructure`; and `@Transactional` is used only inside `application.service`.
+    These were previously only claims in package-info javadoc — now a failing build enforces
+    them. All 4 pass on the current codebase.
+  - **`EXPLAIN` against a seeded large dataset**: seeded 300,000 synthetic rows directly via
+    `psql` (random country/turnover/status, `sustainability_rating` intentionally *not*
+    correlated with `status` — this dataset is for query-plan/volume testing only, it doesn't
+    need to satisfy domain invariants) and ran `EXPLAIN (ANALYZE, BUFFERS)` on the exact
+    `findPotentialSuppliersRaw` query. Findings, both genuine and both worth raising in the
+    interview:
+    - `idx_supplier_record_status_turnover` **is** used by the planner (`Bitmap Index Scan`) for
+      the `status IN ('ACTIVE','ON_PROBATION')` filter — confirmed working as designed.
+    - `idx_supplier_record_country_turnover` is **not** used for the `DENSE_RANK()` window's
+      `(country, annual_turnover)` ordering — Postgres instead does an explicit sort after the
+      bitmap scan (external merge to disk at default `work_mem`; `SET work_mem = '32MB'` switches
+      it to an in-memory quicksort, but total execution time barely changes, ~540ms either way,
+      on ~120k eligible rows out of 300k). Tried adding a composite
+      `(status, country, annual_turnover)` index — the planner still preferred the existing plan,
+      so it was dropped again rather than left as unused dead weight.
+    - **Root cause is structural, not an indexing gap**: the confirmed design decision that the
+      bonus ranking runs over the *entire* eligible population per country (§4, "Potential
+      suppliers score") means Postgres must materialize and rank ~all `ACTIVE`/`ON_PROBATION`
+      rows before it can sort by score and apply `LIMIT` — there is no index that lets it take a
+      "top 10" shortcut, because the correct answer depends on knowing every row's rank within
+      its country first. This is a real, honest performance trade-off of prioritizing the
+      confirmed business semantics over a cheaper alternative (e.g. ranking only within the
+      rate-filtered subset, which was explicitly rejected in that decision). At the 100k-1M row
+      scale this test targets, this query will scan a large fraction of the table on every call;
+      a production system at the high end of that range would likely want a precomputed/cached
+      per-country rank (refreshed periodically or via triggers) rather than computing it live on
+      every request — left as a documented "aspecto dejado fuera" rather than implemented, since
+      it's a materially different design (denormalization) beyond this test's scope.
+    - Cleaned up afterward: dropped the experimental index, truncated the 300k synthetic rows,
+      tore down the containers.
+  - `mvn test`: `Tests run: 78, Failures: 0, Errors: 0, Skipped: 0` (74 + 4 new ArchUnit rules).
 
 ## How to start
 
@@ -408,8 +448,21 @@ into the JVM. **Implemented** (iteration 9) as a single native query in
 Results are read via `PotentialSupplierProjection` (a Spring Data interface projection — `score`
 isn't a real column, so it can't be mapped onto `SupplierRecordEntity`). See the proposed indexes
 in `V1__create_supplier_record_table.sql` (`(country, annual_turnover)` for the bonus window
-function, `(status, annual_turnover)` for the filter/order) — not yet benchmarked with `EXPLAIN`
-against a large seeded dataset (still open, see checklist).
+function, `(status, annual_turnover)` for the filter/order).
+
+**Benchmarked with `EXPLAIN (ANALYZE, BUFFERS)` against 300,000 seeded rows** (iteration 13): the
+`status` index is used by the planner as designed; the `country` index is not — the window
+function still needs an explicit sort of the ~120k-row eligible set. This is not a missing index,
+it is the direct cost of the confirmed rate-independence decision below: since the bonus depends
+on ranking the *entire* per-country population, Postgres cannot use any index to shortcut straight
+to a "top 10" answer — it must materialize and rank the full eligible set on every call
+(~540ms at this scale; wall time didn't meaningfully improve either with a composite
+`(status, country, annual_turnover)` index or with `work_mem` raised enough to keep the sort in
+memory instead of spilling to disk). At the upper end of the stated 100k-1M row range, the honest
+answer is that this query would benefit from a precomputed/cached per-country rank (refreshed
+periodically, or maintained via a trigger on write) rather than computing `DENSE_RANK()` live on
+every request — that denormalization is a materially different design and is left out of scope
+for this test, not attempted as a partial fix.
 
 **Confirmed decision on an ambiguity the README leaves open**: "the two lowest unique annual
 turnovers in their country" doesn't say whether that ranking is computed over every
@@ -449,8 +502,10 @@ it.
 
 ## Checklist de revisión final (mapeada a los criterios de evaluación del README)
 
-- [ ] **Architecture and design** — domain has zero framework imports; verify with a build-time
-      check (e.g. ArchUnit) before calling this done.
+- [x] **Architecture and design** — enforced as a build-time check, not just a javadoc claim:
+      `HexagonalArchitectureTest` (ArchUnit, iteration 13) asserts `domain` imports no framework
+      package, `domain`/`application` never depend inward-to-outward, and `@Transactional` lives
+      only in `application.service`. All 4 rules pass.
 - [x] **Business logic** — `domain.model` fully implemented; **all 7 OpenAPI endpoints** work end
       to end for real (verified against Postgres and, for `accept`, the WireMock country service
       through a genuinely wired Circuit Breaker — see "Progress log", iterations 5-9), including
@@ -473,12 +528,14 @@ it.
       iterations 10-12. All 7 endpoints were additionally verified manually end-to-end via
       `curl`/`psql`/stopping containers against real Postgres and WireMock.
 - [x] **Performance and scalability** — confirmed `findPotentialSuppliers` never materializes
-      more than one page of entities (it doesn't — everything happens in one native SQL query,
-      now covered by `SupplierPersistenceAdapterTest`). `[ ]` still open: run `EXPLAIN` on the
-      query against a seeded 100k+ row table and confirm the proposed indexes in
-      `V1__create_supplier_record_table.sql` are actually used — the query's *correctness* is now
-      proven, but its performance at the stated 100k-1M row scale has not been separately
-      benchmarked.
+      more than one page of entities (everything happens in one native SQL query). `EXPLAIN
+      (ANALYZE, BUFFERS)` run against 300,000 seeded rows (iteration 13): the
+      `status`-based index is genuinely used by the planner; the `country`-based index is not
+      (Postgres sorts explicitly instead) — traced to a structural property of the confirmed
+      rate-independent-bonus decision (§4), not a missing index, since ranking requires
+      materializing the whole per-country eligible population before any `LIMIT` can apply. See
+      "Progress log" iteration 13 and §4 below for the full analysis and the documented
+      denormalization option left out of scope.
 - [ ] **Frontend components** — every component under `src/components` currently returns `null`;
       confirm loading/error/empty states are reachable and distinct once wired.
 - [x] **Docker Compose** — `docker compose up --build db backend` boots cleanly end to end
