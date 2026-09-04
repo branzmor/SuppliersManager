@@ -15,7 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Optional;
 
 /**
- * TODO: implement.
+ * Implements {@link RegisterCandidateUseCase}:
  * <ol>
  *   <li>Look up {@code SupplierRepositoryPort#findByDuns}.</li>
  *   <li>If present and {@code BANNED} → throw {@code SupplierBannedException}.</li>

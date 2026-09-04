@@ -9,8 +9,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * TODO: implement. Look up by DUNS (throw {@code SupplierRecordNotFoundException} if absent),
- * delegate to {@code SupplierRecord#ban}, save.
+ * Looks up by DUNS (throws {@code SupplierRecordNotFoundException} if absent), delegates to
+ * {@code SupplierRecord#ban}, saves.
  */
 @Service
 public class BanSupplierService implements BanSupplierUseCase {

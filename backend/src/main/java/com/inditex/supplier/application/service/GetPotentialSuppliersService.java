@@ -7,8 +7,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * TODO: implement. Thin pass-through to {@code SupplierRepositoryPort#findPotentialSuppliers} —
- * all filtering/scoring/bonus/ordering/pagination happens in SQL there, not here.
+ * Thin pass-through to {@code SupplierRepositoryPort#findPotentialSuppliers} — all
+ * filtering/scoring/bonus/ordering/pagination happens in SQL there, not here.
  */
 @Service
 public class GetPotentialSuppliersService implements GetPotentialSuppliersUseCase {

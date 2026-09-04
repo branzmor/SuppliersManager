@@ -8,9 +8,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * TODO: implement. Look up by DUNS, then filter with
- * {@code SupplierRecord#isVisibleAsSupplier} — return empty if the record exists but is not
- * visible as a supplier (e.g. it is still a plain CANDIDATE).
+ * Looks up by DUNS, then filters with {@code SupplierRecord#isVisibleAsSupplier} — returns
+ * empty if the record exists but is not visible as a supplier (e.g. it is still a plain
+ * CANDIDATE).
  */
 @Service
 public class GetSupplierService implements GetSupplierUseCase {

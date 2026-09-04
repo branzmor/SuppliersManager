@@ -12,7 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * TODO: implement.
+ * Implements {@link AcceptCandidateUseCase}:
  * <ol>
  *   <li>Look up by DUNS, throw {@code SupplierRecordNotFoundException} if absent.</li>
  *   <li>Resolve {@code CountryCheckPort#isBanned} for the record's country; on
