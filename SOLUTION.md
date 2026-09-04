@@ -1,12 +1,12 @@
 # SOLUTION.md
 
-Status: **`domain` layer complete; 5 of 7 endpoints working end to end**. `domain.model` is fully
-implemented and 100% unit-tested. `POST /candidates`, `GET /candidates/{duns}`,
-`GET /suppliers/{duns}`, `POST /candidates/{duns}/refuse` and `POST /suppliers/{duns}/ban` all
-work for real against Postgres, through every layer (controller → mapper → use case → persistence
-adapter → JPA → Flyway-migrated table). Still `TODO`: `POST /candidates/{duns}/accept` (needs the
-still-unstarted `CountryCheckAdapter`/Circuit Breaker) and `GET /suppliers/potential` (needs the
-SQL scoring query) — those two still throw `UnsupportedOperationException` (500).
+Status: **`domain` layer complete; 6 of 7 endpoints working end to end**. `domain.model` is fully
+implemented and 100% unit-tested. Every OpenAPI endpoint except `GET /suppliers/potential` works
+for real against Postgres (and, for `accept`, the WireMock country service through a genuinely
+wired resilience4j Circuit Breaker), through every layer (controller → mapper → use case →
+persistence adapter/external adapter → JPA/HTTP → Flyway-migrated table). Only
+`GET /suppliers/potential` remains — it needs the SQL scoring/bonus/pagination query and still
+throws `UnsupportedOperationException` (500).
 
 ## Progress log
 
@@ -109,7 +109,7 @@ SQL scoring query) — those two still throw `UnsupportedOperationException` (50
     between Active and On Probation").
   - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51`
     (unchanged — verification was manual against Docker again).
-- **Iteration 7** (this commit) — implemented `refuse`/`ban`: `RefuseCandidateService`
+- **Iteration 7** (commit `c240748`) — implemented `refuse`/`ban`: `RefuseCandidateService`
   (find-or-404 + `SupplierRecord#refuse` + save) and `BanSupplierService` (same shape with
   `#ban`), the `POST /candidates/{duns}/refuse` and `POST /suppliers/{duns}/ban` controller
   methods (both now explicitly `@ResponseStatus(NO_CONTENT)` — a void controller method defaults
@@ -129,6 +129,43 @@ SQL scoring query) — those two still throw `UnsupportedOperationException` (50
     - `POST /suppliers/{duns}/ban` on a DUNS that never existed → `404`.
   - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51`
     (unchanged — verification was manual against Docker again).
+- **Iteration 8** (this commit) — implemented `accept`, the last piece requiring the external
+  country service: `CountryClient` (a `RestClient` calling `GET /countries/{country}`, base URL
+  from `country-service.base-url`), `CountryCheckAdapter` (wraps the client in
+  `@CircuitBreaker(name = "countryService")`; its fallback method always throws
+  `CountryCheckUnavailableException`, never returns a boolean, so the fail-safe rule can't be
+  silently bypassed by a future edit), `AcceptCandidateService` (find-or-404, resolve the country
+  check catching `CountryCheckUnavailableException` and treating it as banned, delegate to
+  `SupplierRecord#accept`, save), the controller wiring, and the last two
+  `GlobalExceptionHandler` entries (`CandidateNotAcceptableException`,
+  `CountryCheckUnavailableException` — the latter is defense-in-depth, since the service already
+  absorbs it internally and it shouldn't normally reach the web layer).
+  - **Verified against all three real services together** (backend + Postgres + the WireMock
+    country-service), covering every branch:
+    - Country not banned (`ES`, first letter A-M per the WireMock mappings) + rating `A` → `204`,
+      `GET /suppliers/{duns}` → `"status":"Active"`.
+    - Country banned (`PT`, first letter N-Z) → `409 "Candidate can not be accepted"`.
+    - Rating `D` (same non-banned country) → `204`; confirmed via `psql` the internal status is
+      really `ON_PROBATION`, while `GET /suppliers/{duns}` still reports `"status":"Active"` —
+      the internal/external split working end to end through a real `accept()` call, not just a
+      manually-flipped row this time.
+    - Turnover `< 1,000,000` with an approved country → `409` (guard order confirmed: country ok
+      alone isn't enough).
+    - Accepting an already-`ACTIVE` candidate again → `409`; accepting a DUNS that never
+      existed → `404`.
+    - **The fail-safe path, the single most important test in this slice**: registered a
+      candidate, then `docker compose stop country-service` to simulate a real outage, then
+      called `accept` → `409 "Candidate can not be accepted"`, **not a 500** — and confirmed via
+      `GET /candidates/{duns}` that the record was left untouched in `CANDIDATE` (the guard fires
+      before any mutation). Restarted `country-service` afterwards and confirmed
+      `GET /actuator/circuitbreakers` shows the `countryService` instance genuinely tracking real
+      traffic (`bufferedCalls`/`failedCalls` reflecting the calls just made, `state: CLOSED`,
+      since one failure among six calls doesn't cross the 50% threshold) — proof the Circuit
+      Breaker annotation is actually wired into the request path, not just present in
+      `application.yml`.
+  - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 51`
+    (unchanged — verification was manual against Docker again).
+  - **All 7 OpenAPI endpoints now implemented except `GET /suppliers/potential`.**
 
 ## How to start
 
@@ -275,20 +312,23 @@ it.
 
 - [ ] **Architecture and design** — domain has zero framework imports; verify with a build-time
       check (e.g. ArchUnit) before calling this done.
-- [x] **Business logic** — `domain.model` fully implemented; 5 of 7 endpoints
-      (`POST /candidates`, both GETs, `refuse`, `ban`) work end to end for real (verified against
-      Postgres — see "Progress log", iterations 5-7), including the internal→external status
-      mapping and the confirmed "ban only from ON_PROBATION, never ACTIVE" decision, both
-      empirically confirmed, not just unit-tested. `[ ]` still open: `accept` (needs the
-      country-service Circuit Breaker) and `potential-suppliers` (needs the SQL scoring query).
+- [x] **Business logic** — `domain.model` fully implemented; 6 of 7 endpoints
+      (everything except `potential-suppliers`) work end to end for real (verified against
+      Postgres and, for `accept`, the WireMock country service through a genuinely wired Circuit
+      Breaker — see "Progress log", iterations 5-8), including the internal→external status
+      mapping, the confirmed "ban only from ON_PROBATION" decision, and the country-check
+      fail-safe (verified by actually stopping `country-service` mid-test), all empirically
+      confirmed, not just unit-tested. `[ ]` still open: `potential-suppliers` (needs the SQL
+      scoring/bonus/pagination query — the last remaining endpoint).
 - [ ] **Code quality** — remove now-stale TODO javadoc comments as each piece is implemented; keep
       constructor injection, no field injection.
 - [x] **Testing** — `domain.model` is 100% tested: 23/23 green (`SupplierRecordTest`, `DunsTest`,
       `CountryCodeTest`, `AnnualTurnoverTest`, `SustainabilityRatingTest`, `SupplierStatusTest`),
-      verified via `mvn test` in a Maven container — see "Progress log". The 3 working endpoints
-      were verified manually end-to-end via `curl`/`psql` against real Postgres instead of
-      automated tests (the corresponding controller/service/mapper test stubs remain `@Disabled` —
-      un-disabling them is still open). `[ ]` still open: un-`@Disabled` the remaining 51 tests as their
+      verified via `mvn test` in a Maven container — see "Progress log". The 6 working endpoints
+      were verified manually end-to-end via `curl`/`psql`/stopping containers against real
+      Postgres and WireMock instead of automated tests (the corresponding controller/service/
+      mapper/adapter test stubs remain `@Disabled` — un-disabling them is still open). `[ ]` still
+      open: un-`@Disabled` the remaining 51 tests as their
       production code lands; the `SupplierPersistenceAdapterTest` bonus-calculation test against
       the README's worked example (200k/200k/200k/210k/250k) is the single highest-value test
       still pending — do not skip it.

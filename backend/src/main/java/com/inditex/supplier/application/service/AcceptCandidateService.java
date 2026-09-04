@@ -3,6 +3,10 @@ package com.inditex.supplier.application.service;
 import com.inditex.supplier.application.port.in.AcceptCandidateUseCase;
 import com.inditex.supplier.application.port.out.CountryCheckPort;
 import com.inditex.supplier.application.port.out.SupplierRepositoryPort;
+import com.inditex.supplier.domain.exception.CountryCheckUnavailableException;
+import com.inditex.supplier.domain.exception.SupplierRecordNotFoundException;
+import com.inditex.supplier.domain.model.Duns;
+import com.inditex.supplier.domain.model.SupplierRecord;
 import com.inditex.supplier.domain.model.SustainabilityRating;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,6 +35,19 @@ public class AcceptCandidateService implements AcceptCandidateUseCase {
     @Override
     @Transactional
     public void accept(int duns, SustainabilityRating rating) {
-        throw new UnsupportedOperationException("TODO");
+        Duns candidateDuns = new Duns(duns);
+        SupplierRecord record = supplierRepositoryPort.findByDuns(candidateDuns)
+                .orElseThrow(() -> new SupplierRecordNotFoundException(candidateDuns));
+
+        boolean countryBanned;
+        try {
+            countryBanned = countryCheckPort.isBanned(record.country());
+        } catch (CountryCheckUnavailableException e) {
+            // Fail-safe (README §4): never assume a country is not banned when the check fails.
+            countryBanned = true;
+        }
+
+        record.accept(rating, countryBanned);
+        supplierRepositoryPort.save(record);
     }
 }

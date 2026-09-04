@@ -66,7 +66,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(CandidateNotAcceptableException.class)
     public ResponseEntity<ErrorResponseDto> handleCandidateNotAcceptable(CandidateNotAcceptableException ex) {
-        throw new UnsupportedOperationException("TODO");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponseDto("Candidate can not be accepted"));
     }
 
     @ExceptionHandler(CandidateNotRefusableException.class)
@@ -81,8 +81,10 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(CountryCheckUnavailableException.class)
     public ResponseEntity<ErrorResponseDto> handleCountryCheckUnavailable(CountryCheckUnavailableException ex) {
-        // TODO: fail-safe — respond exactly like CandidateNotAcceptableException (409, same message).
-        throw new UnsupportedOperationException("TODO");
+        // Defense in depth: AcceptCandidateService already catches this and treats it as a banned
+        // country before it reaches the domain, but handle it here too in case it ever escapes
+        // from elsewhere — same fail-safe response as CandidateNotAcceptableException.
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponseDto("Candidate can not be accepted"));
     }
 
     @ExceptionHandler(SupplierRecordNotFoundException.class)

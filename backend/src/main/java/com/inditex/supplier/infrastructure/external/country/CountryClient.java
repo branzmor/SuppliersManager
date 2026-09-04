@@ -1,6 +1,7 @@
 package com.inditex.supplier.infrastructure.external.country;
 
 import com.inditex.supplier.infrastructure.external.country.dto.CountryResponseDto;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -16,12 +17,8 @@ public class CountryClient {
 
     private final RestClient restClient;
 
-    public CountryClient(RestClient.Builder restClientBuilder,
-                          org.springframework.core.env.Environment environment) {
-        // TODO: build restClient with the country service base URL from configuration
-        // (e.g. "country-service.base-url" in application.yml), e.g.:
-        // this.restClient = restClientBuilder.baseUrl(environment.getProperty("country-service.base-url")).build();
-        this.restClient = restClientBuilder.build();
+    public CountryClient(RestClient.Builder restClientBuilder, Environment environment) {
+        this.restClient = restClientBuilder.baseUrl(environment.getProperty("country-service.base-url")).build();
     }
 
     /**
@@ -33,6 +30,9 @@ public class CountryClient {
      *     {@code CountryCheckUnavailableException} when appropriate.
      */
     public CountryResponseDto getCountry(String isoCode) {
-        throw new UnsupportedOperationException("TODO");
+        return restClient.get()
+                .uri("/countries/{country}", isoCode)
+                .retrieve()
+                .body(CountryResponseDto.class);
     }
 }

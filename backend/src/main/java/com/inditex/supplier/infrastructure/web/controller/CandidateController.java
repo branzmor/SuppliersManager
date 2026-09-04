@@ -11,6 +11,7 @@ import com.inditex.supplier.infrastructure.web.mapper.CandidateWebMapper;
 import com.inditex.supplier.domain.exception.SupplierRecordNotFoundException;
 import com.inditex.supplier.domain.model.Duns;
 import com.inditex.supplier.domain.model.SupplierRecord;
+import com.inditex.supplier.domain.model.SustainabilityRating;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -72,9 +73,10 @@ public class CandidateController {
     }
 
     @PostMapping("/{duns}/accept")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
     public void acceptCandidate(@PathVariable int duns, @Valid @RequestBody CandidateAcceptRequestDto request) {
-        // TODO: map DTO rating -> domain SustainabilityRating, call acceptCandidateUseCase, return 204.
-        throw new UnsupportedOperationException("TODO");
+        SustainabilityRating rating = SustainabilityRating.valueOf(request.sustainabilityRating().name());
+        acceptCandidateUseCase.accept(duns, rating);
     }
 
     @PostMapping("/{duns}/refuse")

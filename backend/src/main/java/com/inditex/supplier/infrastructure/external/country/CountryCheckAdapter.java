@@ -27,7 +27,7 @@ public class CountryCheckAdapter implements CountryCheckPort {
     @Override
     @CircuitBreaker(name = "countryService", fallbackMethod = "fallbackIsBanned")
     public boolean isBanned(CountryCode country) {
-        throw new UnsupportedOperationException("TODO");
+        return countryClient.getCountry(country.isoCode()).isBanned();
     }
 
     /**
@@ -36,6 +36,7 @@ public class CountryCheckAdapter implements CountryCheckPort {
      * fail-safe rule cannot be accidentally bypassed by a future change to this method's body.
      */
     private boolean fallbackIsBanned(CountryCode country, Throwable throwable) {
-        throw new UnsupportedOperationException("TODO");
+        throw new CountryCheckUnavailableException(
+                "Country check unavailable for " + country.isoCode(), throwable);
     }
 }
