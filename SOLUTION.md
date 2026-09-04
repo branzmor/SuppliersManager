@@ -26,11 +26,27 @@ place. The `SupplierRecord` aggregate's state machine is now fully implemented a
     - `mvn test` run inside a `maven:3.9-eclipse-temurin-21` container against `backend/`:
       `Tests run: 74, Failures: 0, Errors: 0, Skipped: 61` — the 13 `SupplierRecordTest` cases are
       the only ones actually executing; the other 61 remain `@Disabled` stubs as expected.
-    - `docker compose up --build db backend`: the image builds and Spring Boot starts, but the
-      container exits as documented below ("Known current limitation") with
+    - `docker compose up --build db backend` (first attempt): the image builds and Spring Boot
+      starts, but the container exits with
       `SchemaManagementException: Schema-validation: missing table [supplier_record]` — confirming
-      the Flyway gap is real, not just a note in this file. Stack torn down with
-      `docker compose down` after the check.
+      the (at-the-time) commented-out Flyway migration was a real gap, not just a note in this
+      file.
+- **Iteration 3** (this commit) — activated `V1__create_supplier_record_table.sql` (uncommented,
+  fully executable). Two column-type fixes were needed to actually pass Hibernate's
+  `ddl-auto: validate` against `SupplierRecordEntity`, found only by running the real container,
+  not by reading the code:
+  - `country VARCHAR(2)`, not `CHAR(2)` — Hibernate maps a plain `String` field to `VARCHAR`
+    regardless of `@Column(length=...)`.
+  - `sustainability_rating CHAR(1)`, not `VARCHAR(1)` — the opposite: an
+    `@Enumerated(EnumType.STRING)` field with `@Column(length = 1)` validates against `CHAR(1)` in
+    Hibernate 6. Both are documented as a comment directly in the migration file so nobody
+    "fixes" one back without re-verifying in Docker.
+  - **Verified in Docker**: `docker compose down -v` (dropping the stale `db-data` volume from
+    the iteration-2 check, which still had the empty migration's checksum recorded) →
+    `docker compose up --build db backend` → `Started SupplierManagementApplication in 22.896
+    seconds`, `curl http://localhost:8080/actuator/health` → `200`. Re-ran `mvn test` in the
+    Maven container afterwards to confirm nothing else broke: `Tests run: 74, Failures: 0,
+    Errors: 0, Skipped: 61` (same as iteration 2 — no test touches the database yet).
 
 ## How to start
 
@@ -43,13 +59,10 @@ docker compose up --build
 - Country service (WireMock, provided): http://localhost:8088
 - Postgres: localhost:5432 (user/pass/db: `supplier`)
 
-**Known current limitation**: `backend/src/main/resources/db/migration/V1__create_supplier_record_table.sql`
-is intentionally left fully commented out for this skeleton iteration (per the task's own
-instruction: "puede ir comentado ... sin ejecutar todavía"). `spring.jpa.hibernate.ddl-auto` is
-set to `validate`, so **the backend container will fail to start** until that migration is
-uncommented (or otherwise implemented) — there is no table for Hibernate to validate
-`SupplierRecordEntity` against yet. This is expected for this delivery; the next iteration
-uncomments/finalizes the migration as part of implementing `application.service`.
+The backend now boots cleanly end to end (Flyway migration → Hibernate schema validation →
+Tomcat) — verified via `docker compose up --build` and `curl http://localhost:8080/actuator/health`
+→ `200`. Calling any real endpoint still throws `UnsupportedOperationException` (500) since
+`application.service` is unimplemented — that's the next slice, not a startup problem.
 
 ## Architecture
 
@@ -171,8 +184,6 @@ it.
   contract for them (see decision 1b above).
 - **Reapply after refusal** — intentionally not implemented, per decision 1a above (deviates from
   the literal README sentence; flag in interview).
-- **Flyway migration left commented** — per the task's own instruction for this skeleton
-  iteration; the backend will not fully boot until it's uncommented.
 - **No authentication/authorization** — out of scope per the README, which describes "a
   supervisor" acting without specifying an auth model.
 - **No idempotency key handling on POST /candidates** — not requested by the OpenAPI (no header
@@ -197,7 +208,8 @@ it.
       than one page of entities; run `EXPLAIN` on the final query against a seeded 100k+ row table.
 - [ ] **Frontend components** — every component under `src/components` currently returns `null`;
       confirm loading/error/empty states are reachable and distinct once wired.
-- [ ] **Docker Compose** — `docker compose up --build` must boot db → backend → frontend cleanly
-      once the Flyway migration is uncommented; re-verify after that change.
+- [x] **Docker Compose** — `docker compose up --build db backend` boots cleanly end to end
+      (verified: `/actuator/health` → 200). `[ ]` still open: verify `frontend` too, and the
+      full `docker compose up` with all four services together.
 - [ ] **Documentation** — keep this file's "Design decisions" section in sync with any further
       pivots, especially if the two confirmed FSM deviations above are revisited.
