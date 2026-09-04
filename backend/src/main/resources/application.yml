@@ -1,0 +1,52 @@
+spring:
+  application:
+    name: supplier-management
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:supplier}
+    username: ${DB_USER:supplier}
+    password: ${DB_PASSWORD:supplier}
+  jpa:
+    hibernate:
+      # TODO: keep as "validate" once the Flyway migration is finalized — never "update" (schema
+      # drift risk at the 100k-1M row scale this test targets).
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: ${SERVER_PORT:8080}
+
+country-service:
+  base-url: ${COUNTRY_SERVICE_URL:http://localhost:8088}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      countryService:
+        # TODO: tune once integration-tested against the WireMock mappings in ./wiremock.
+        register-health-indicator: true
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+  timelimiter:
+    instances:
+      countryService:
+        timeout-duration: 2s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,circuitbreakers
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    com.inditex.supplier: DEBUG
