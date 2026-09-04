@@ -1,15 +1,14 @@
 # SOLUTION.md
 
-Status: **All 7 OpenAPI backend endpoints implemented and verified end to end.** `domain.model`,
-`application.service`, and both controllers are fully unit/slice-tested (66 tests green: 23
-domain + 26 service + 6 mapper + 11 `@WebMvcTest` controller). Every endpoint works for real
-against Postgres (and, for `accept`, the WireMock country service through a genuinely wired
-resilience4j Circuit Breaker), through every layer (controller → mapper → use case → persistence
-adapter/external adapter → JPA/HTTP → Flyway-migrated table). Remaining test coverage: 8
-`@Disabled` stubs — the Testcontainers-backed persistence adapter test and the WireMock-backed
-country adapter test. Also remaining: the frontend (0% implemented) and the checklist items below
-(ArchUnit check,
-`EXPLAIN`-verified indexes, full 4-service `docker compose up`).
+Status: **Backend complete: all 7 OpenAPI endpoints implemented and verified end to end, 100% of
+the backend test suite green (74/74, zero `@Disabled` stubs).** `domain.model`,
+`application.service`, both controllers, and both integration-level adapters (Testcontainers
+PostgreSQL, embedded WireMock) are all tested. Every endpoint works for real against Postgres
+(and, for `accept`, the WireMock country service through a genuinely wired resilience4j Circuit
+Breaker), through every layer (controller → mapper → use case → persistence adapter/external
+adapter → JPA/HTTP → Flyway-migrated table). Remaining: the frontend (0% implemented) and the
+checklist items below (ArchUnit check, `EXPLAIN`-verified indexes, full 4-service
+`docker compose up`).
 
 ## Progress log
 
@@ -229,7 +228,7 @@ country adapter test. Also remaining: the frontend (0% implemented) and the chec
     the one-off manual `curl` checks from earlier iterations.
   - `mvn test` in the Maven container: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 19` (down
     from 51 — all 32 newly-enabled tests passed on the first run).
-- **Iteration 11** (this commit) — un-disabled and implemented `CandidateControllerTest`/
+- **Iteration 11** (commit `fc2e38a`) — un-disabled and implemented `CandidateControllerTest`/
   `SupplierControllerTest` (11 tests) via `@WebMvcTest` + `MockMvc`, mocking each use case port
   with `@MockBean` while `@Import`-ing the real `CandidateWebMapper`/`SupplierWebMapper` beans
   (plain deterministic mappers, not use cases — no reason to mock them, and it exercises the
@@ -242,6 +241,54 @@ country adapter test. Also remaining: the frontend (0% implemented) and the chec
     `SupplierPersistenceAdapterTest` (4, needs Testcontainers PostgreSQL — the single
     highest-value test still pending, per the checklist) and `CountryCheckAdapterTest` (4, needs
     a WireMock test instance to exercise the Circuit Breaker).
+- **Iteration 12** (this commit) — implemented the last 8 tests, closing out test coverage
+  entirely:
+  - **`CountryCheckAdapterTest`**: added `org.wiremock:wiremock-standalone` (test-scope) and used
+    a real embedded `WireMockServer` (dynamic port, wired in via `@DynamicPropertySource`
+    overriding `country-service.base-url`) inside a **deliberately narrow**
+    `@SpringBootTest(classes = {CountryClient.class, CountryCheckAdapter.class,
+    RestClientConfig.class}) @EnableAutoConfiguration` context — not the full application. A
+    plain unit test instantiating `CountryCheckAdapter` directly cannot exercise the
+    `@CircuitBreaker` annotation at all (it only takes effect through Spring AOP proxying), so a
+    real Spring context is required; scoping it to 3 classes plus
+    `spring.autoconfigure.exclude` for JPA/DataSource/Flyway keeps it fast and avoids needing a
+    database for a test that has nothing to do with persistence. Since the context (and therefore
+    the `CircuitBreaker` singleton) is cached and reused across test methods, `@BeforeEach` resets
+    it via `CircuitBreakerRegistry` — otherwise one test's forced failures would leak into the
+    next and make results order-dependent.
+    - `circuitBreakerOpensAfterRepeatedFailures` drives 5 real failing calls (matching the
+      default `minimum-number-of-calls: 5` / `failure-rate-threshold: 50` in `application.yml`)
+      to trip the breaker, then resets WireMock's request log and asserts a 6th call is answered
+      with `CountryCheckUnavailableException` **and that WireMock received zero requests for
+      it** — proof the call was actually short-circuited by resilience4j, not just another failed
+      HTTP round-trip.
+  - **`SupplierPersistenceAdapterTest`**: `@SpringBootTest` (full application context — simplest
+    way to get Flyway/JPA wired exactly as production does) + `@Testcontainers` with a real
+    `PostgreSQLContainer`, datasource properties injected via `@DynamicPropertySource`. Covers
+    the save/find round trip (including upsert-by-DUNS — saving twice never creates a duplicate
+    row), the eligibility filter (`BANNED` and `CANDIDATE` excluded, `annualTurnover <= rate`
+    excluded), score ordering with pagination, and — the single highest-value test in the whole
+    suite — **the README's exact worked example** (200k/200k/200k/210k/250k) seeded as real rows
+    and asserted against hardcoded expected scores (`25000.0`/`26250.0`), not a
+    floating-point recomputation in the test itself (Postgres computes the score in exact
+    `numeric` arithmetic before the final `::double precision` cast, so recomputing via Java
+    `double` multiplication in the assertion could in principle drift by a ULP or two — hardcoding
+    the values already verified via `curl` in iteration 9 avoids that risk entirely).
+  - **Environment note (not a code issue):** running these two Testcontainers-backed tests via
+    `mvn test` inside this session's verification container (`maven:3.9-eclipse-temurin-21`,
+    itself a Docker container, talking to the host's Docker daemon through a mounted
+    `/var/run/docker.sock`) needed two extra environment variables that a normal local `mvn test`
+    or CI runner with direct Docker access would **not** need:
+    `TESTCONTAINERS_RYUK_DISABLED=true` (Ryuk, Testcontainers' resource-reaper sidecar, couldn't
+    reach back to the calling container over the sibling-container network — cleanup instead
+    relied on the JVM shutdown hook, confirmed working: no leftover containers after the run) and
+    `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal` (without it, Testcontainers computed the
+    Postgres container's reachable address as the bridge gateway IP, which the calling container
+    couldn't route to). Purely an artifact of nesting Docker-in-Docker for this session's own
+    verification method — the test code itself is standard Testcontainers usage and needs no
+    special configuration in a normal environment.
+  - **`mvn test`: `Tests run: 74, Failures: 0, Errors: 0, Skipped: 0` — the full backend test
+    suite is 100% green with zero `@Disabled` stubs remaining.**
 
 ## How to start
 
@@ -414,21 +461,24 @@ it.
       endpoint level — remaining work is test coverage, code quality, and the frontend.
 - [ ] **Code quality** — remove now-stale TODO javadoc comments as each piece is implemented; keep
       constructor injection, no field injection.
-- [x] **Testing** — 66/66 green: `domain.model` (23 — `SupplierRecordTest`, `DunsTest`,
-      `CountryCodeTest`, `AnnualTurnoverTest`, `SustainabilityRatingTest`, `SupplierStatusTest`),
-      all 9 `application.service` classes (26), both web mapper classes (6), and both
-      `@WebMvcTest` controller classes (11), all verified via `mvn test` in a Maven container —
-      see "Progress log", iterations 10-11. All 7 endpoints were additionally verified manually
-      end-to-end via `curl`/`psql`/stopping containers against real Postgres and WireMock.
-      `[ ]` still open: 8 `@Disabled` stubs — `CountryCheckAdapterTest` (4, needs WireMock) and
-      the single highest-value test still pending, `SupplierPersistenceAdapterTest` (4, needs
-      Testcontainers PostgreSQL) — its bonus-calculation test against the README's worked example
-      is currently only proven by the manual `curl` verification in iteration 9, which isn't a
-      regression-proof automated test — do not skip it.
-- [ ] **Performance and scalability** — confirm `findPotentialSuppliers` never materializes more
-      than one page of entities (it doesn't — verified by reading the query, which does everything
-      in SQL); run `EXPLAIN` on the final query against a seeded 100k+ row table (still open) and
-      confirm the proposed indexes in `V1__create_supplier_record_table.sql` are actually used.
+- [x] **Testing — 100% complete: 74/74 green, zero `@Disabled` stubs.** `domain.model` (23 —
+      `SupplierRecordTest`, `DunsTest`, `CountryCodeTest`, `AnnualTurnoverTest`,
+      `SustainabilityRatingTest`, `SupplierStatusTest`), all 9 `application.service` classes (26),
+      both web mapper classes (6), both `@WebMvcTest` controller classes (11),
+      `SupplierPersistenceAdapterTest` (4, real Testcontainers PostgreSQL — includes the README's
+      exact worked example seeded as real rows, the single highest-value test in the suite), and
+      `CountryCheckAdapterTest` (4, embedded WireMock inside a narrowly-scoped `@SpringBootTest`
+      that exercises the real resilience4j Circuit Breaker AOP proxy, including proving the
+      short-circuit path receives zero real requests once the breaker trips). See "Progress log",
+      iterations 10-12. All 7 endpoints were additionally verified manually end-to-end via
+      `curl`/`psql`/stopping containers against real Postgres and WireMock.
+- [x] **Performance and scalability** — confirmed `findPotentialSuppliers` never materializes
+      more than one page of entities (it doesn't — everything happens in one native SQL query,
+      now covered by `SupplierPersistenceAdapterTest`). `[ ]` still open: run `EXPLAIN` on the
+      query against a seeded 100k+ row table and confirm the proposed indexes in
+      `V1__create_supplier_record_table.sql` are actually used — the query's *correctness* is now
+      proven, but its performance at the stated 100k-1M row scale has not been separately
+      benchmarked.
 - [ ] **Frontend components** — every component under `src/components` currently returns `null`;
       confirm loading/error/empty states are reachable and distinct once wired.
 - [x] **Docker Compose** — `docker compose up --build db backend` boots cleanly end to end
