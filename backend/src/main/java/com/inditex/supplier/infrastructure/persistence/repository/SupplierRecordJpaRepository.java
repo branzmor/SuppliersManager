@@ -35,6 +35,13 @@ public interface SupplierRecordJpaRepository extends JpaRepository<SupplierRecor
      * bonus ranking has already been computed over the full country population — see class
      * javadoc. {@code score = annual_turnover * 0.1 * rating_constant * bonus}, {@code bonus} is
      * 1.25 for the two lowest unique turnovers per country, else 1.
+     *
+     * <p><strong>Stable pagination</strong>: {@code ORDER BY score DESC, duns ASC} — {@code score}
+     * alone is not a unique key (multiple suppliers can tie exactly), so a {@code LIMIT}/
+     * {@code OFFSET} query ordered by {@code score} alone would be ordered non-deterministically
+     * among tied rows (Postgres gives no ordering guarantee for ties without a fully-specifying
+     * {@code ORDER BY}), which can duplicate or skip rows across consecutive pages. Breaking ties
+     * by {@code duns} (already unique) makes the ordering total and pagination stable.
      */
     @Query(value = """
             WITH ranked AS (
@@ -62,7 +69,7 @@ public interface SupplierRecordJpaRepository extends JpaRepository<SupplierRecor
                 )::double precision AS score
             FROM ranked
             WHERE annual_turnover > :rate
-            ORDER BY score DESC
+            ORDER BY score DESC, duns ASC
             LIMIT :limit OFFSET :offset
             """, nativeQuery = true)
     List<PotentialSupplierProjection> findPotentialSuppliersRaw(@Param("rate") long rate,

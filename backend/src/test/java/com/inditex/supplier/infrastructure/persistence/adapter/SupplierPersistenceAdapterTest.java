@@ -19,7 +19,10 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
@@ -29,6 +32,12 @@ import static org.assertj.core.api.Assertions.tuple;
  * requirement (README §6) must be verified against real SQL, not a mock or an in-memory database
  * with different SQL dialect quirks (H2 doesn't identically support {@code DENSE_RANK()} combined
  * with the double-quoted camelCase column aliases the native query relies on).
+ *
+ * <p>Deliberately does not share its Testcontainer/{@code @SpringBootTest} context with other
+ * integration test classes (e.g. {@code ConcurrencyIntegrationTest}) — a shared static container
+ * field inherited from a common base class was tried and caused cross-class connection-pool
+ * staleness (the second test class to run would get a stopped/restarted container while Spring's
+ * context cache still held a HikariCP pool wired to the first container's now-stale port).
  */
 @SpringBootTest
 @Testcontainers
@@ -131,6 +140,37 @@ class SupplierPersistenceAdapterTest {
         PotentialSuppliersPage secondPage = adapter.findPotentialSuppliers(250L, 2, 2);
         assertThat(secondPage.suppliers()).extracting(s -> s.record().duns().value())
                 .containsExactly(300_000_001);
+    }
+
+    @Test
+    void findPotentialSuppliersBreaksScoreTiesByDunsAscendingForStablePagination() {
+        // Same country, turnover and rating -> identical score for all 4 rows (all also tie for
+        // DENSE_RANK=1, so the bonus applies equally to every one of them and doesn't break the
+        // tie either). Without an explicit tie-breaker, consecutive LIMIT/OFFSET pages over an
+        // ORDER BY score DESC query have no guaranteed order among these rows and could duplicate
+        // or skip some when paged.
+        int[] dunsValues = {400_000_004, 400_000_002, 400_000_003, 400_000_001};
+        for (int duns : dunsValues) {
+            saveDirect(duns, "IT", 500_000L, SupplierStatus.ACTIVE, SustainabilityRating.A);
+        }
+
+        PotentialSuppliersPage firstPage = adapter.findPotentialSuppliers(250L, 2, 0);
+        PotentialSuppliersPage secondPage = adapter.findPotentialSuppliers(250L, 2, 2);
+
+        assertThat(firstPage.suppliers()).extracting(s -> s.record().duns().value())
+                .containsExactly(400_000_001, 400_000_002);
+        assertThat(secondPage.suppliers()).extracting(s -> s.record().duns().value())
+                .containsExactly(400_000_003, 400_000_004);
+        assertThat(firstPage.totalCount()).isEqualTo(4);
+        assertThat(secondPage.totalCount()).isEqualTo(4);
+
+        // The two pages together must cover every seeded DUNS exactly once - no duplicates, no
+        // omissions - regardless of the order rows were inserted in.
+        List<Integer> allPagedDuns = new ArrayList<>();
+        firstPage.suppliers().forEach(s -> allPagedDuns.add(s.record().duns().value()));
+        secondPage.suppliers().forEach(s -> allPagedDuns.add(s.record().duns().value()));
+        assertThat(allPagedDuns).containsExactlyInAnyOrder(400_000_001, 400_000_002, 400_000_003, 400_000_004);
+        assertThat(Set.copyOf(allPagedDuns)).hasSize(4);
     }
 
     private void saveDirect(int duns, String country, long turnover, SupplierStatus status, SustainabilityRating rating) {
