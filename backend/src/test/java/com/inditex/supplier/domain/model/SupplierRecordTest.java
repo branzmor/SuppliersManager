@@ -161,12 +161,11 @@ class SupplierRecordTest {
     }
 
     @Test
-    void refusedStatusIsTerminalNoReapply() {
+    void refusedRecordRejectsEveryTransitionExceptReapply() {
         SupplierRecord refused = recordIn(SupplierStatus.REFUSED);
 
-        // No reapply() method exists on the aggregate at all (confirmed no-reapply project
-        // decision — see SupplierStatus javadoc). Every mutating operation must reject a REFUSED
-        // record, proving there is no outgoing transition.
+        // REFUSED is not terminal (see SupplierStatus javadoc) but the only outgoing transition
+        // is reapply() — every other mutating operation must still reject it.
         assertThatThrownBy(() -> refused.accept(SustainabilityRating.A, false))
                 .isInstanceOf(CandidateNotAcceptableException.class);
         assertThatThrownBy(refused::refuse).isInstanceOf(CandidateNotRefusableException.class);
@@ -174,5 +173,33 @@ class SupplierRecordTest {
         assertThatThrownBy(refused::restrict).isInstanceOf(SupplierNotRestrictableException.class);
         assertThatThrownBy(refused::promote).isInstanceOf(SupplierNotPromotableException.class);
         assertThat(refused.status()).isEqualTo(SupplierStatus.REFUSED);
+    }
+
+    @Test
+    void reapplyResetsToCandidateWithNewDataAndClearsRating() {
+        SupplierRecord refused = recordIn(SupplierStatus.REFUSED);
+        CountryCode newCountry = new CountryCode("FR");
+        AnnualTurnover newTurnover = new AnnualTurnover(3_000_000L);
+
+        refused.reapply("New Name", newCountry, newTurnover);
+
+        assertThat(refused.status()).isEqualTo(SupplierStatus.CANDIDATE);
+        assertThat(refused.name()).isEqualTo("New Name");
+        assertThat(refused.country()).isEqualTo(newCountry);
+        assertThat(refused.annualTurnover()).isEqualTo(newTurnover);
+        assertThat(refused.sustainabilityRating()).isNull();
+    }
+
+    @Test
+    void reapplyFailsWhenNotRefused() {
+        SupplierRecord candidateRecord = candidate();
+
+        assertThatThrownBy(() -> candidateRecord.reapply(NAME, APPROVED_COUNTRY, SUFFICIENT_TURNOVER))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(candidateRecord.status()).isEqualTo(SupplierStatus.CANDIDATE);
+
+        SupplierRecord active = recordIn(SupplierStatus.ACTIVE);
+        assertThatThrownBy(() -> active.reapply(NAME, APPROVED_COUNTRY, SUFFICIENT_TURNOVER))
+                .isInstanceOf(IllegalStateException.class);
     }
 }

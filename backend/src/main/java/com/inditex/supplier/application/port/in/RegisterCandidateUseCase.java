@@ -10,9 +10,12 @@ import com.inditex.supplier.domain.model.SupplierRecord;
 public interface RegisterCandidateUseCase {
 
     /**
+     * If a record already exists for the DUNS in {@code REFUSED} status, this reapplies (updates
+     * the record in place with the newly submitted data and moves it back to {@code CANDIDATE})
+     * instead of failing — see {@code SupplierRecord#reapply} and {@code SupplierStatus} javadoc.
+     *
      * @throws CandidateAlreadyExistsException if a record already exists for the DUNS in any
-     *     non-BANNED status (including {@code REFUSED} — no reapply, see
-     *     {@code SupplierStatus} javadoc)
+     *     status other than {@code REFUSED} or {@code BANNED}
      * @throws SupplierBannedException if a record already exists for the DUNS in {@code BANNED}
      *     status
      */

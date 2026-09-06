@@ -13,18 +13,17 @@ package com.inditex.supplier.domain.model;
  *   CANDIDATE --accept(A|B)--&gt;      ACTIVE
  *   CANDIDATE --accept(C|D|E)--&gt;    ON_PROBATION
  *   CANDIDATE --refuse()--&gt;         REFUSED
+ *   REFUSED --reapply(...)--&gt;       CANDIDATE
  *   ON_PROBATION --ban()--&gt;         BANNED
  * </pre>
  *
- * <p><strong>Project decision (deviates from the literal README text "a refused candidacy
- * allows the candidate to reapply"):</strong> per the FSM diagram
- * ({@code wiki/iop-techtest-fsm-supplier.png}), which draws {@code Declined} flowing directly
- * into a terminal state with no edge back to {@code Candidate}, this implementation treats
- * {@link #REFUSED} as terminal, exactly like {@link #BANNED}. There is no {@code reapply()}
- * operation. A new {@code POST /candidates} for a DUNS already in {@code REFUSED} status is
- * rejected with {@code CandidateAlreadyExistsException}, the same as any other non-{@code BANNED}
- * existing record. This is documented as an explicit, user-confirmed deviation in
- * {@code SOLUTION.md} — bring it up in the interview.
+ * <p><strong>{@link #REFUSED} is not terminal — a refused candidacy can reapply</strong>, per the
+ * README business text ("a refused candidacy allows the candidate to reapply"). {@code POST
+ * /candidates} for a DUNS currently in {@code REFUSED} status calls
+ * {@code SupplierRecord#reapply}, which updates the mutable fields, clears any previous rating,
+ * and moves the record back to {@link #CANDIDATE}. Only {@link #BANNED} is terminal — a banned
+ * supplier can never become a candidate or supplier again for that DUNS. See
+ * {@code SupplierRecord#reapply} javadoc and {@code SOLUTION.md} for the full rationale.
  *
  * <p><strong>Extension beyond the current OpenAPI contract:</strong> the FSM diagram also draws
  * {@code Active --Restrict--> On Probation} and {@code On Probation --Promote--> Active}, which
@@ -41,10 +40,11 @@ public enum SupplierStatus {
     BANNED;
 
     /**
-     * @return true if no transition is possible out of this status ({@link #REFUSED} and
-     *     {@link #BANNED}).
+     * @return true if no transition is possible out of this status. Only {@link #BANNED} is
+     *     terminal — {@link #REFUSED} can still transition back to {@link #CANDIDATE} via
+     *     {@code SupplierRecord#reapply}.
      */
     public boolean isTerminal() {
-        return this == REFUSED || this == BANNED;
+        return this == BANNED;
     }
 }

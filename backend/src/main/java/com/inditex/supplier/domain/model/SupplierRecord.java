@@ -28,16 +28,15 @@ import java.util.Objects;
  * <pre>
  *   CANDIDATE --accept(rating A|B)--&gt;   ACTIVE
  *   CANDIDATE --accept(rating C|D|E)--&gt; ON_PROBATION
- *   CANDIDATE --refuse()--&gt;             REFUSED           (terminal — see below)
+ *   CANDIDATE --refuse()--&gt;             REFUSED
+ *   REFUSED --reapply(...)--&gt;           CANDIDATE
  *   ON_PROBATION --ban()--&gt;             BANNED            (terminal)
  * </pre>
  *
- * <p><strong>REFUSED and BANNED are both terminal in this implementation</strong> — no
- * {@code reapply()} operation exists. This is a confirmed project decision that deviates from
- * the literal README sentence "a refused candidacy allows the candidate to reapply", made to
- * follow the FSM diagram instead (which draws {@code Declined} straight into a terminal state).
- * See {@link SupplierStatus} javadoc and {@code SOLUTION.md} for the full rationale — flag this
- * explicitly in the interview.
+ * <p><strong>Only BANNED is terminal.</strong> Per the README business text ("a refused
+ * candidacy allows the candidate to reapply"), {@link #reapply} lets a {@code REFUSED} record
+ * become a fresh {@code CANDIDATE} again, updating its mutable fields and clearing any previous
+ * rating. See {@link SupplierStatus} javadoc and {@code SOLUTION.md} for the full rationale.
  *
  * <p><strong>Extension beyond the current OpenAPI contract:</strong> {@link #restrict()} and
  * {@link #promote()} model the diagram-only {@code Active --Restrict--> On Probation} and
@@ -76,9 +75,16 @@ public class SupplierRecord {
      * Factory for a brand-new candidate application ({@code POST /candidates}).
      *
      * <p>Callers (the application service) are responsible for first checking, via
-     * {@code SupplierRepositoryPort}, that no {@link SupplierRecord} already exists for this
-     * {@link Duns}: if one does, throw {@link CandidateAlreadyExistsException} (any non-BANNED
-     * status) or {@link SupplierBannedException} (BANNED status) *before* calling this factory.
+     * {@code SupplierRepositoryPort}, whether a {@link SupplierRecord} already exists for this
+     * {@link Duns}:
+     * <ul>
+     *   <li>no existing record → call this factory;</li>
+     *   <li>existing record in {@link SupplierStatus#REFUSED} → call {@link #reapply} on it
+     *       instead, do not call this factory;</li>
+     *   <li>existing record in {@link SupplierStatus#BANNED} → throw
+     *       {@link SupplierBannedException};</li>
+     *   <li>existing record in any other status → throw {@link CandidateAlreadyExistsException}.</li>
+     * </ul>
      * This method itself performs no uniqueness check — it only builds a valid new aggregate in
      * {@link SupplierStatus#CANDIDATE}.
      *
@@ -154,6 +160,39 @@ public class SupplierRecord {
             throw new CandidateNotRefusableException(duns);
         }
         this.status = SupplierStatus.REFUSED;
+    }
+
+    /**
+     * Lets a previously refused candidacy reapply ({@code POST /candidates} on a DUNS whose
+     * current status is {@link SupplierStatus#REFUSED}), per the README business rule "a refused
+     * candidacy allows the candidate to reapply".
+     *
+     * <p>Replaces {@code name}/{@code country}/{@code annualTurnover} with the newly submitted
+     * values, discards any previous {@code sustainabilityRating} (a reapplication is a fresh
+     * candidacy, not a resumption of the old one), and moves the record back to
+     * {@link SupplierStatus#CANDIDATE}.
+     *
+     * <p>The caller (the application service) is responsible for only invoking this method when
+     * {@code status == REFUSED} — it is the counterpart to {@link #apply}'s "no existing record"
+     * branch. The guard below is defense-in-depth, not the primary check.
+     *
+     * @throws IllegalStateException if {@code status != REFUSED}
+     * @throws IllegalArgumentException if any field is invalid (delegated to the value objects)
+     */
+    public void reapply(String name, CountryCode country, AnnualTurnover annualTurnover) {
+        if (status != SupplierStatus.REFUSED) {
+            throw new IllegalStateException("reapply is only valid from REFUSED, was " + status);
+        }
+        Objects.requireNonNull(country, "country must not be null");
+        Objects.requireNonNull(annualTurnover, "annualTurnover must not be null");
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("name must not be blank");
+        }
+        this.name = name;
+        this.country = country;
+        this.annualTurnover = annualTurnover;
+        this.sustainabilityRating = null;
+        this.status = SupplierStatus.CANDIDATE;
     }
 
     /**
