@@ -1,8 +1,72 @@
 services:
   country-service:
-    image: wiremock/wiremock:latest
+    image: wiremock/wiremock:3.9.1
     ports:
       - "8088:8080"
     volumes:
       - ./wiremock:/home/wiremock
     command: ["--global-response-templating"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/__admin/mappings"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: supplier
+      POSTGRES_USER: supplier
+      POSTGRES_PASSWORD: supplier
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supplier -d supplier"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: supplier
+      DB_USER: supplier
+      DB_PASSWORD: supplier
+      COUNTRY_SERVICE_URL: http://country-service:8080
+      # Effective HTTP timeouts for the country-service call (see RestClientConfig) - tunable
+      # without a rebuild. Defaults (1s/2s) already applied if these are left unset.
+      COUNTRY_SERVICE_CONNECT_TIMEOUT_MS: 1000
+      COUNTRY_SERVICE_READ_TIMEOUT_MS: 2000
+    depends_on:
+      db:
+        condition: service_healthy
+      country-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:8080
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  db-data:

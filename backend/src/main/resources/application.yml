@@ -1,0 +1,54 @@
+spring:
+  application:
+    name: supplier-management
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:supplier}
+    username: ${DB_USER:supplier}
+    password: ${DB_PASSWORD:supplier}
+  jpa:
+    hibernate:
+      # "validate" (never "update") - schema changes only ever come from a Flyway migration,
+      # never from Hibernate inferring DDL at the 100k-1M row scale this test targets.
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: ${SERVER_PORT:8080}
+
+country-service:
+  base-url: ${COUNTRY_SERVICE_URL:http://localhost:8088}
+  # Real, effective HTTP timeouts for the synchronous RestClient call in CountryClient (see
+  # RestClientConfig javadoc for why a resilience4j TimeLimiter can't do this for a blocking
+  # call). 1-2s defaults are generous for a same-network service call but still bound the wait
+  # to something a caller can tolerate; externalized so a deployment can tune them without a
+  # code change.
+  connect-timeout-ms: ${COUNTRY_SERVICE_CONNECT_TIMEOUT_MS:1000}
+  read-timeout-ms: ${COUNTRY_SERVICE_READ_TIMEOUT_MS:2000}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      countryService:
+        register-health-indicator: true
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,circuitbreakers
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    com.inditex.supplier: DEBUG
