@@ -14,6 +14,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import java.time.Duration;
+import java.time.Instant;
+
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
@@ -43,7 +46,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         properties = {
                 "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration,"
                         + "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,"
-                        + "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration"
+                        + "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration",
+                // Short on purpose: readTimeoutRespondsWithinBoundedTimeOnSlowCountryService below
+                // stubs a deliberately slow WireMock response and asserts the call still returns
+                // (via the read timeout, not by waiting the full delay) within a bounded time.
+                "country-service.connect-timeout-ms=300",
+                "country-service.read-timeout-ms=300"
         })
 @EnableAutoConfiguration
 class CountryCheckAdapterTest {
@@ -95,6 +103,28 @@ class CountryCheckAdapterTest {
 
         assertThatThrownBy(() -> countryCheckAdapter.isBanned(new CountryCode("XX")))
                 .isInstanceOf(CountryCheckUnavailableException.class);
+    }
+
+    @Test
+    void respondsWithinBoundedTimeAndFailsSafeOnSlowCountryService() {
+        // No @CircuitBreaker state has tripped yet at this point (fresh reset in @BeforeEach), so
+        // this call reaches WireMock for real and must be bounded by the read timeout itself
+        // (300ms, see the class-level @SpringBootTest properties) - not by the resilience4j
+        // TimeLimiter config removed from application.yml, which never applied to this
+        // synchronous RestClient call in the first place (see RestClientConfig javadoc).
+        WIRE_MOCK.stubFor(get(urlEqualTo("/countries/ES"))
+                .willReturn(aResponse().withFixedDelay(5_000).withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"name\":\"ES\",\"isBanned\":false}")));
+
+        Instant start = Instant.now();
+        assertThatThrownBy(() -> countryCheckAdapter.isBanned(new CountryCode("ES")))
+                .isInstanceOf(CountryCheckUnavailableException.class);
+        Duration elapsed = Duration.between(start, Instant.now());
+
+        // Comfortably above the 300ms read timeout (allows for scheduling/JVM jitter) but far
+        // below the 5s the stub would otherwise force the caller to wait for.
+        assertThat(elapsed).isLessThan(Duration.ofSeconds(2));
     }
 
     @Test

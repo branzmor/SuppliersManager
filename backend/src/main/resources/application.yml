@@ -7,8 +7,8 @@ spring:
     password: ${DB_PASSWORD:supplier}
   jpa:
     hibernate:
-      # TODO: keep as "validate" once the Flyway migration is finalized — never "update" (schema
-      # drift risk at the 100k-1M row scale this test targets).
+      # "validate" (never "update") - schema changes only ever come from a Flyway migration,
+      # never from Hibernate inferring DDL at the 100k-1M row scale this test targets.
       ddl-auto: validate
     open-in-view: false
   flyway:
@@ -20,12 +20,18 @@ server:
 
 country-service:
   base-url: ${COUNTRY_SERVICE_URL:http://localhost:8088}
+  # Real, effective HTTP timeouts for the synchronous RestClient call in CountryClient (see
+  # RestClientConfig javadoc for why a resilience4j TimeLimiter can't do this for a blocking
+  # call). 1-2s defaults are generous for a same-network service call but still bound the wait
+  # to something a caller can tolerate; externalized so a deployment can tune them without a
+  # code change.
+  connect-timeout-ms: ${COUNTRY_SERVICE_CONNECT_TIMEOUT_MS:1000}
+  read-timeout-ms: ${COUNTRY_SERVICE_READ_TIMEOUT_MS:2000}
 
 resilience4j:
   circuitbreaker:
     instances:
       countryService:
-        # TODO: tune once integration-tested against the WireMock mappings in ./wiremock.
         register-health-indicator: true
         sliding-window-type: COUNT_BASED
         sliding-window-size: 10
@@ -33,10 +39,6 @@ resilience4j:
         failure-rate-threshold: 50
         wait-duration-in-open-state: 10s
         permitted-number-of-calls-in-half-open-state: 3
-  timelimiter:
-    instances:
-      countryService:
-        timeout-duration: 2s
 
 management:
   endpoints:
