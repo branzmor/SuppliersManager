@@ -32,16 +32,20 @@ export function ResultsTable({ suppliers, sortColumn, sortDirection, onSortChang
         <tr>
           {COLUMNS.map((column) => {
             const isActive = column.key === sortColumn;
+            const ariaSort = isActive ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none';
             const indicator = isActive ? (sortDirection === 'asc' ? '▲' : '▼') : '';
             return (
-              <th key={column.key}>
-                <button
-                  type="button"
-                  className="results-table__sort-button"
-                  onClick={() => onSortChange(column.key)}
-                  aria-sort={isActive ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
-                >
-                  {column.label} <span className="results-table__sort-indicator">{indicator}</span>
+              <th key={column.key} aria-sort={ariaSort}>
+                <button type="button" className="results-table__sort-button" onClick={() => onSortChange(column.key)}>
+                  {column.label}{' '}
+                  <span className="results-table__sort-indicator" aria-hidden="true">
+                    {indicator}
+                  </span>
+                  {isActive && (
+                    <span className="visually-hidden">
+                      , sorted {sortDirection === 'asc' ? 'ascending' : 'descending'}
+                    </span>
+                  )}
                 </button>
               </th>
             );
