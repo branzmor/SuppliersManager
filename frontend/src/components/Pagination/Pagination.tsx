@@ -3,9 +3,13 @@ export interface PaginationProps {
   offset: number;
   total: number;
   onPageChange: (newOffset: number) => void;
+  /** Rows left after client-side filters (name/DUNS/country/rating) are applied to this page. */
+  visibleCount: number;
+  /** Whether any client-side filter is currently active. */
+  hasActiveFilters: boolean;
 }
 
-export function Pagination({ limit, offset, total, onPageChange }: PaginationProps) {
+export function Pagination({ limit, offset, total, onPageChange, visibleCount, hasActiveFilters }: PaginationProps) {
   const currentPage = Math.floor(offset / limit) + 1;
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const hasPrevious = offset > 0;
@@ -13,7 +17,12 @@ export function Pagination({ limit, offset, total, onPageChange }: PaginationPro
 
   return (
     <div className="pagination">
-      <span className="pagination__count">{total} suppliers found</span>
+      <span className="pagination__count">
+        {/* The server-reported total describes the whole matching dataset; visibleCount is only
+            what survives the client-side filters on THIS loaded page - the two are not the same
+            number and must not be presented as if they were (see SOLUTION.md). */}
+        {hasActiveFilters ? `${visibleCount} visible suppliers out of ${total} total` : `${total} suppliers found`}
+      </span>
       <div className="pagination__controls">
         <button
           type="button"

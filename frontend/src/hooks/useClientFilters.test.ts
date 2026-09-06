@@ -47,4 +47,30 @@ describe('useClientFilters', () => {
     });
     expect(result.current.apply(rows).map((r) => r.duns)).toEqual([111111111]);
   });
+
+  it('reports hasActiveFilters false by default and true once any filter is set', () => {
+    const { result } = renderHook(() => useClientFilters());
+    expect(result.current.hasActiveFilters).toBe(false);
+
+    act(() => result.current.setSearchTerm('beta'));
+    expect(result.current.hasActiveFilters).toBe(true);
+  });
+
+  it('reset clears every filter and hasActiveFilters goes back to false', () => {
+    const { result } = renderHook(() => useClientFilters());
+    act(() => {
+      result.current.setSearchTerm('beta');
+      result.current.setSelectedCountries(['PT']);
+      result.current.setSelectedRatings(['B']);
+    });
+    expect(result.current.hasActiveFilters).toBe(true);
+
+    act(() => result.current.reset());
+
+    expect(result.current.searchTerm).toBe('');
+    expect(result.current.selectedCountries).toEqual([]);
+    expect(result.current.selectedRatings).toEqual([]);
+    expect(result.current.hasActiveFilters).toBe(false);
+    expect(result.current.apply(rows)).toHaveLength(3);
+  });
 });

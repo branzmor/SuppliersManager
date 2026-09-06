@@ -8,6 +8,8 @@ export interface UseClientFiltersResult {
   setSelectedCountries: (countries: string[]) => void;
   selectedRatings: string[];
   setSelectedRatings: (ratings: string[]) => void;
+  hasActiveFilters: boolean;
+  reset: () => void;
   apply: (rows: PotentialSupplier[]) => PotentialSupplier[];
 }
 
@@ -15,6 +17,17 @@ export function useClientFilters(): UseClientFiltersResult {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
   const [selectedRatings, setSelectedRatings] = useState<string[]>([]);
+
+  const hasActiveFilters = searchTerm.trim().length > 0 || selectedCountries.length > 0 || selectedRatings.length > 0;
+
+  // Clears every filter - must be called whenever a new search (a different amount) starts, so
+  // filters left over from the previous result page can't silently hide rows of the new one
+  // (which would otherwise look like a false "no suppliers match" empty state).
+  const reset = () => {
+    setSearchTerm('');
+    setSelectedCountries([]);
+    setSelectedRatings([]);
+  };
 
   const apply = (rows: PotentialSupplier[]) => {
     const term = searchTerm.trim().toLowerCase();
@@ -37,6 +50,8 @@ export function useClientFilters(): UseClientFiltersResult {
     setSelectedCountries,
     selectedRatings,
     setSelectedRatings,
+    hasActiveFilters,
+    reset,
     apply,
   };
 }

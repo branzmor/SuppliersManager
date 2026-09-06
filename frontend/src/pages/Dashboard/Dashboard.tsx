@@ -23,6 +23,10 @@ export function Dashboard() {
   const handleSearch = (newRate: number) => {
     setRate(newRate);
     setOffset(0);
+    // A new amount means a brand-new result set - filters left over from the previous search
+    // (a country/rating/text filter that happens to match nothing in the new page) must not
+    // silently produce a false "no suppliers match" empty state.
+    filters.reset();
     void search(newRate, PAGE_SIZE, 0);
   };
 
@@ -80,7 +84,14 @@ export function Dashboard() {
                   onSortChange={(column) => toggleSort(column as typeof sortColumn)}
                 />
               )}
-              <Pagination limit={PAGE_SIZE} offset={offset} total={total} onPageChange={handlePageChange} />
+              <Pagination
+                limit={PAGE_SIZE}
+                offset={offset}
+                total={total}
+                onPageChange={handlePageChange}
+                visibleCount={visibleSuppliers.length}
+                hasActiveFilters={filters.hasActiveFilters}
+              />
             </>
           )}
         </>
