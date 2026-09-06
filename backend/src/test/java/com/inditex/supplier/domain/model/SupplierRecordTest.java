@@ -104,8 +104,8 @@ class SupplierRecordTest {
         record.refuse();
         assertThat(record.status()).isEqualTo(SupplierStatus.REFUSED);
 
-        // REFUSED is terminal (no-reapply project decision) — refusing again must fail the same
-        // way as refusing any other non-CANDIDATE status.
+        // REFUSED has no outgoing transition except reapply() — refusing again must fail the
+        // same way as refusing any other non-CANDIDATE status.
         assertThatThrownBy(record::refuse).isInstanceOf(CandidateNotRefusableException.class);
     }
 

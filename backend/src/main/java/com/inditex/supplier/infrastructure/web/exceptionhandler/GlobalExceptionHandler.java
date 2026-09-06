@@ -26,8 +26,11 @@ import java.util.stream.Collectors;
  *   <caption>Exception -&gt; HTTP mapping</caption>
  *   <tr><th>Exception</th><th>When</th><th>HTTP</th></tr>
  *   <tr><td>{@link CandidateAlreadyExistsException}</td>
- *       <td>Active candidacy or supplier already exists for the DUNS (includes REFUSED, per the
- *           no-reapply decision)</td><td>409 "Candidate already exists"</td></tr>
+ *       <td>Active candidacy or supplier already exists for the DUNS (i.e. status is
+ *           {@code CANDIDATE}, {@code ACTIVE}, or {@code ON_PROBATION}). A DUNS in
+ *           {@code REFUSED} instead reapplies via {@code SupplierRecord#reapply} and returns
+ *           201; a DUNS in {@code BANNED} triggers {@link SupplierBannedException}
+ *           instead)</td><td>409 "Candidate already exists"</td></tr>
  *   <tr><td>{@link SupplierBannedException}</td>
  *       <td>{@code POST /candidates} on a DUNS in BANNED status</td>
  *       <td>409 "Supplier banned"</td></tr>
