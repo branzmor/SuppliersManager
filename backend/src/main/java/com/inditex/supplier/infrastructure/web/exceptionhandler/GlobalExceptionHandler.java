@@ -11,6 +11,7 @@ import com.inditex.supplier.infrastructure.web.dto.ErrorResponseDto;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -52,6 +53,9 @@ import java.util.stream.Collectors;
  *       <td>409, generic "modified concurrently" message</td></tr>
  *   <tr><td>{@link MethodArgumentNotValidException}</td>
  *       <td>Bean Validation failure on a request DTO</td><td>400</td></tr>
+ *   <tr><td>{@link org.springframework.http.converter.HttpMessageNotReadableException}</td>
+ *       <td>Request body cannot be deserialized (e.g. an enum field outside its declared values)
+ *           — never reaches Bean Validation</td><td>400</td></tr>
  * </table>
  *
  * <p><strong>Known gap (documented, not implemented):</strong> the OpenAPI declares
@@ -111,6 +115,19 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponseDto> handleOptimisticLockingFailure(ObjectOptimisticLockingFailureException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(new ErrorResponseDto("Supplier record was modified concurrently, please retry"));
+    }
+
+    /**
+     * Thrown when the request body cannot be deserialized at all — most commonly an enum field
+     * (e.g. {@code sustainabilityRating}) holding a value outside its declared set. Without this
+     * handler the request never reaches Bean Validation (deserialization fails first), so it fell
+     * through to Spring's default MVC error handling: still a 400, but with an empty/non-conforming
+     * body instead of the {@code Error} schema every other 400 in this contract uses — a gap
+     * surfaced by {@code infrastructure.web.contract.OpenApiContractTest}.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponseDto> handleMessageNotReadable(HttpMessageNotReadableException ex) {
+        return ResponseEntity.badRequest().body(new ErrorResponseDto("Malformed request body"));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
