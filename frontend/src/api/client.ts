@@ -8,7 +8,11 @@ export class ApiClientError extends Error {
   }
 }
 
-export async function apiGet<T>(path: string, params?: Record<string, string | number>): Promise<T> {
+export async function apiGet<T>(
+  path: string,
+  params?: Record<string, string | number>,
+  signal?: AbortSignal,
+): Promise<T> {
   const url = new URL(path, BASE_URL || window.location.origin);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
@@ -18,8 +22,14 @@ export async function apiGet<T>(path: string, params?: Record<string, string | n
 
   let response: Response;
   try {
-    response = await fetch(url.toString());
-  } catch {
+    response = await fetch(url.toString(), { signal });
+  } catch (err) {
+    // A cancelled request (superseded by a newer one, or the component unmounted) is not a
+    // failure - let it propagate as-is so the caller can distinguish it from a real network
+    // error and skip showing an error message for it.
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err;
+    }
     throw new ApiClientError('Unable to reach the server. Please check your connection and try again.');
   }
 
