@@ -11,6 +11,7 @@ import com.inditex.supplier.infrastructure.web.dto.ErrorResponseDto;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -43,6 +44,9 @@ import java.util.stream.Collectors;
  *           assume a country is not banned on failure)</td></tr>
  *   <tr><td>{@link SupplierRecordNotFoundException}</td>
  *       <td>No record exists for the DUNS on accept/refuse/ban</td><td>404 (no body)</td></tr>
+ *   <tr><td>{@link org.springframework.orm.ObjectOptimisticLockingFailureException}</td>
+ *       <td>Concurrent modification of the same row (see {@code SupplierRecordEntity#version})</td>
+ *       <td>409, generic "modified concurrently" message</td></tr>
  *   <tr><td>{@link MethodArgumentNotValidException}</td>
  *       <td>Bean Validation failure on a request DTO</td><td>400</td></tr>
  * </table>
@@ -91,6 +95,19 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(SupplierRecordNotFoundException.class)
     public ResponseEntity<Void> handleSupplierRecordNotFound(SupplierRecordNotFoundException ex) {
         return ResponseEntity.notFound().build();
+    }
+
+    /**
+     * Thrown when {@code @Version}-based optimistic locking (see
+     * {@code SupplierRecordEntity#version}) detects that the row being updated (by {@code accept},
+     * {@code refuse}, {@code ban}, or a reapply through {@code POST /candidates}) was already
+     * changed by another transaction since it was read. Never a stack trace or internal detail —
+     * just a 409 telling the caller to re-fetch and retry.
+     */
+    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+    public ResponseEntity<ErrorResponseDto> handleOptimisticLockingFailure(ObjectOptimisticLockingFailureException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ErrorResponseDto("Supplier record was modified concurrently, please retry"));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

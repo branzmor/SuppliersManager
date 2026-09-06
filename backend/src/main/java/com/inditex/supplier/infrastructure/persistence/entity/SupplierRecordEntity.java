@@ -9,6 +9,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.Version;
 
 /**
  * JPA entity backing the {@code SupplierRecord} aggregate. Deliberately separate from the domain
@@ -18,6 +19,13 @@ import jakarta.persistence.UniqueConstraint;
  * <p>{@code duns} carries the {@code UNIQUE} constraint that makes the aggregate's integrity
  * rules (README §"Integrity Rules") automatic — see proposed schema in
  * {@code V1__create_supplier_record_table.sql}.
+ *
+ * <p>{@code version} ({@link Version}, added in {@code V2__add_supplier_record_version.sql})
+ * enables JPA optimistic locking: two concurrent transactions that both load the same row and
+ * then both try to update it will have the second one's flush fail with
+ * {@code ObjectOptimisticLockingFailureException} instead of silently overwriting the first
+ * transaction's change (see {@code GlobalExceptionHandler}, which maps that to {@code 409}).
+ * Field-only, deliberately with no setter — the value is managed exclusively by Hibernate.
  */
 @Entity
 @Table(name = "supplier_record", uniqueConstraints = @UniqueConstraint(name = "uk_supplier_record_duns", columnNames = "duns"))
@@ -46,6 +54,10 @@ public class SupplierRecordEntity {
     @Enumerated(EnumType.STRING)
     @Column(length = 1)
     private SustainabilityRatingJpa sustainabilityRating;
+
+    @Version
+    @Column(nullable = false)
+    private Long version;
 
     protected SupplierRecordEntity() {
         // JPA
@@ -111,5 +123,9 @@ public class SupplierRecordEntity {
 
     public void setSustainabilityRating(SustainabilityRatingJpa sustainabilityRating) {
         this.sustainabilityRating = sustainabilityRating;
+    }
+
+    public Long getVersion() {
+        return version;
     }
 }

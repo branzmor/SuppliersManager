@@ -1,5 +1,7 @@
 package com.inditex.supplier.application.port.out;
 
+import com.inditex.supplier.domain.exception.CandidateAlreadyExistsException;
+import com.inditex.supplier.domain.exception.SupplierBannedException;
 import com.inditex.supplier.domain.model.Duns;
 import com.inditex.supplier.domain.model.SupplierRecord;
 
@@ -24,6 +26,20 @@ public interface SupplierRepositoryPort {
     /**
      * Persists a new or updated aggregate. Because {@link Duns} is the identity and the table has
      * a {@code UNIQUE(duns)} constraint, this is effectively an upsert keyed by DUNS.
+     *
+     * <p>Two concurrency failure modes are translated into the same business exceptions a caller
+     * already handles for the non-racing case, rather than surfacing as a raw 500:
+     * <ul>
+     *   <li>a concurrent update of the exact same row (lost-update prevention via the entity's
+     *       {@code @Version} column) throws
+     *       {@code org.springframework.orm.ObjectOptimisticLockingFailureException} — left
+     *       untranslated here since it isn't a domain exception, but mapped to {@code 409} by
+     *       {@code GlobalExceptionHandler};</li>
+     *   <li>a concurrent <em>insert</em> for the same DUNS racing past the caller's own
+     *       {@code findByDuns} check (last line of defense: the {@code UNIQUE(duns)} constraint
+     *       itself) throws {@link SupplierBannedException} or {@link CandidateAlreadyExistsException},
+     *       resolved by re-reading whichever row won the race.</li>
+     * </ul>
      */
     SupplierRecord save(SupplierRecord record);
 
@@ -32,7 +48,9 @@ public interface SupplierRepositoryPort {
      * filtering ({@code annual_turnover > rate}, not {@code BANNED}), score and "small supplier
      * bonus" computation (bonus requires a {@code DENSE_RANK() OVER (PARTITION BY country ORDER
      * BY annual_turnover)} to find the two lowest unique turnovers per country), descending-score
-     * ordering, and {@code limit}/{@code offset} pagination.
+     * ordering (tie-broken by DUNS ascending, so the ordering is total and pagination is stable
+     * even when several suppliers share the exact same score), and {@code limit}/{@code offset}
+     * pagination.
      *
      * <p><strong>Must never load the full dataset into memory</strong> — the expected volume is
      * 100,000 to 1,000,000 suppliers (README §6, "Performance and scalability").
