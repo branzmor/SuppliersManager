@@ -1,19 +1,23 @@
 # SOLUTION.md
 
-Status: **Feature-complete end to end.** Backend: all 7 OpenAPI endpoints implemented and
-verified end to end, 100% of the backend test suite green (78/78, zero `@Disabled` stubs,
-including 4 ArchUnit rules enforcing the hexagonal layering as a build-time check), and the
-`potential-suppliers` query benchmarked with `EXPLAIN` against 300k seeded rows (index usage
-confirmed for the status filter; a documented, honest performance trade-off found for the
-country-based bonus ranking — see §4 and "Progress log" iteration 13). Every endpoint works for
-real against Postgres (and, for `accept`, the WireMock country service through a genuinely wired
-resilience4j Circuit Breaker), through every layer. Frontend: the potential-suppliers dashboard
-(iteration 15) implements every requirement in the README's frontend table — amount search with
-minimum-250 validation, sortable/filterable results table, client-side name/DUNS/country/rating
-filtering, limit/offset pagination with result count, and distinct loading/error/empty states —
-verified against the real backend through the full `docker compose up` stack, not just unit
-tests. **Remaining work: none identified; see "Aspectos dejados fuera" for scope intentionally
-left out.**
+Status: **Feature-complete end to end, including a full concurrency/robustness review pass
+(iteration 16).** Backend: all 7 OpenAPI endpoints implemented and verified end to end, 100% of
+the backend test suite green (**86/86**, zero `@Disabled` stubs, including 4 ArchUnit rules
+enforcing the hexagonal layering as a build-time check), and the `potential-suppliers` query
+benchmarked with `EXPLAIN` against 300k seeded rows (index usage confirmed for the status filter;
+a documented, honest performance trade-off found for the country-based bonus ranking — see §4 and
+"Progress log" iteration 13). Every endpoint works for real against Postgres (and, for `accept`,
+the WireMock country service through a genuinely wired resilience4j Circuit Breaker with real,
+effective HTTP timeouts), through every layer. Reapply-after-refusal, optimistic locking, the
+concurrent-duplicate-DUNS race, and stable score-tied pagination are all implemented and covered
+by real-PostgreSQL integration tests (see decisions 1a, 6, and §4's tie-break note). Frontend: the
+potential-suppliers dashboard implements every requirement in the README's frontend table —
+amount search with minimum-250 validation, sortable/filterable results table, client-side
+name/DUNS/country/rating filtering, limit/offset pagination with a total-vs-visible count
+distinction, distinct loading/error/empty states, and out-of-order-request-safe state updates via
+`AbortController` — verified against the real backend through the full `docker compose up` stack,
+not just unit tests (**29/29 frontend tests green**). **Remaining work: none identified; see
+"Aspectos dejados fuera" for scope intentionally left out.**
 
 ## Progress log
 
@@ -125,9 +129,9 @@ left out.**
   - **Verified against real Postgres**, covering every branch, including the two decisions most
     likely to be miscoded:
     - `refuse`: `CANDIDATE` → `204`; `GET` right after → still `200` (REFUSED stays visible as a
-      candidate); refusing the same DUNS again → `409 "Candidate can not be refused"` — this is
-      also the empirical proof of the no-reapply decision, since there is no other way back into
-      `CANDIDATE` from `REFUSED`.
+      candidate); refusing the same DUNS again → `409 "Candidate can not be refused"` — at this
+      point in the build, `reapply()` did not exist yet (added in iteration 16, see "Design
+      decisions" §1a), so this was also, at the time, the only way back into `CANDIDATE`.
     - `ban`: from `ON_PROBATION` → `204`, then `GET /suppliers/{duns}` → `"status":"Disqualified"`;
       banning again → `409`. **Critically, from `ACTIVE`** (set via `psql`, since `accept()` isn't
       wired to a controller yet) → `409 "Supplier can not be banned"`, and a follow-up `GET`
@@ -416,6 +420,71 @@ left out.**
     `npm run build`/`npm run lint`/`npm run test` all clean throughout. Cleaned up afterward:
     `docker compose down` + removed the seeded `db-data` volume, so the delivered environment
     starts empty.
+- **Iteration 16** (this commit) — a full review pass closing every gap raised against the
+  delivered solution: reapply-after-refusal, optimistic locking, the concurrent-DUNS race, stable
+  pagination, frontend request-race cancellation, filter/counter coherence, real country-service
+  timeouts, and Docker/accessibility cleanup. See "Design decisions" §§1a, 6, 7, 8, 9 above for the
+  full rationale behind each change; summarized here:
+  - **Reapply after refusal** (§1a): `SupplierRecord#reapply`, `RegisterCandidateService` branches
+    on `REFUSED` before falling through to `CandidateAlreadyExistsException`. New tests:
+    `SupplierRecordTest#reapplyResetsToCandidateWithNewDataAndClearsRating`/
+    `#reapplyFailsWhenNotRefused`, `SupplierStatusTest#onlyBannedIsTerminal`,
+    `RegisterCandidateServiceTest#reappliesWhenExistingRecordIsRefused`. Removed every claim in
+    this file that the FSM diagram overrides the written README requirement.
+  - **Optimistic locking + concurrent-DUNS race** (§6): `SupplierRecordEntity#version` (`@Version`,
+    `V2__add_supplier_record_version.sql`), `SupplierPersistenceAdapter#save` now uses
+    `saveAndFlush` and translates a `uk_supplier_record_duns` constraint violation into
+    `SupplierBannedException`/`CandidateAlreadyExistsException`; `GlobalExceptionHandler` maps
+    `ObjectOptimisticLockingFailureException` to `409`. New `ConcurrencyIntegrationTest` (2 tests,
+    real Testcontainers PostgreSQL). **A real bug was found here only by firing two genuinely
+    concurrent `POST /candidates` at the actual running `docker compose up` stack**: the
+    constraint-violation re-check was reading through the same (by then poisoned) persistence
+    context as the failed flush, turning every racing insert into an unmapped `500` instead of the
+    intended `409` whenever it ran through `RegisterCandidateService`'s real `@Transactional`
+    method — a failure mode the adapter-level test alone could not catch, since it calls `save()`
+    standalone. Fixed with a `PROPAGATION_REQUIRES_NEW` `TransactionTemplate` for the re-check; new
+    permanent regression test `RegisterCandidateServiceConcurrencyIntegrationTest` (goes through
+    the real service, not the adapter); re-verified against the rebuilt Docker stack (5 repeated
+    real concurrent races, `201`/`409` every time, never a `500`). See "Design decisions" §6.
+  - **Stable pagination**: `findPotentialSuppliersRaw`'s `ORDER BY` gained `, duns ASC`. New
+    `SupplierPersistenceAdapterTest#findPotentialSuppliersBreaksScoreTiesByDunsAscendingForStablePagination`.
+  - **Real country-service timeouts** (§7): `RestClientConfig` now configures
+    `SimpleClientHttpRequestFactory` connect/read timeouts from `country-service.connect-timeout-ms`/
+    `read-timeout-ms` (env-overridable); the inert `resilience4j.timelimiter` block was deleted.
+    New `CountryCheckAdapterTest#respondsWithinBoundedTimeAndFailsSafeOnSlowCountryService`
+    (WireMock 5s fixed delay, 300ms test timeout, asserts completion well under 2s).
+  - **Frontend request races and filter coherence** (§8): `usePotentialSuppliers` gained
+    `AbortController`-based cancellation of superseded requests plus an unmount guard;
+    `useClientFilters` gained `reset()`/`hasActiveFilters`, called from `Dashboard#handleSearch` on
+    every new amount; `Pagination` now shows `"{visible} visible suppliers out of {total} total"`
+    while filters are active. New `Dashboard.test.tsx` (10 tests): loading, success, API error,
+    empty state, pagination, client-side filtering + visible/total count, default score-descending
+    sort, sort-toggle on header click, out-of-order request resolution, and filter reset on a new
+    search.
+  - **Accessibility + Docker** (§9): `aria-sort` moved from the sort `<button>` onto its `<th>`
+    (per the WAI-ARIA table-sort pattern), plus a visually-hidden "sorted ascending/descending"
+    announcement for screen readers. `docker-compose.yml`: `wiremock/wiremock:latest` pinned to
+    `3.9.1`, real `curl`-based healthchecks added for `backend`/`country-service`, `depends_on`
+    upgraded to `condition: service_healthy` for both `backend→country-service` and
+    `frontend→backend`. Both `.dockerignore` files extended. Two stale `TODO` comments removed
+    from `application.yml`.
+  - **Verification**: `mvn test` → **86/86 green**, zero `@Disabled`, zero regressions (up from
+    78 — iteration 13's count — with 8 new tests: 2 reapply, 1 terminal-status update, 2
+    adapter-level concurrency-integration, 1 service-level concurrency-integration regression test
+    for the bug above, 1 stable-pagination, 1 timeout). `npm run test` → **29/29 green** (up
+    from 17 at the end of iteration 15: +2 for `useClientFilters`' reset/hasActiveFilters, +10 for
+    the new `Dashboard.test.tsx`).
+    `npm run lint` and `npm run build` both clean. `mvn package` → `BUILD SUCCESS`. Full
+    `docker compose config` → validates. `docker compose up --build` → all four containers up,
+    `backend`/`country-service` report `(healthy)`. Smoke-tested all 7 OpenAPI endpoints via
+    `curl` against the live stack, including the exact reapply flow (`refuse` → `POST /candidates`
+    again → `201` with the new data → `GET` confirms `CANDIDATE`) and the ban-blocks-reapply rule
+    (`POST /candidates` on a `BANNED` duns → `409 {"info":"Supplier banned"}`). Drove the running
+    dashboard in a real browser against the live backend: search, the default score-descending
+    sort with `aria-sort="descending"` confirmed on the `<th>` (not the button) via the live DOM,
+    the free-text filter producing both the `EmptyState` and the distinct
+    `"0 visible suppliers out of 1 total"` counter together, and the filter correctly clearing on
+    a brand-new search. `docker compose down` afterward, **no volumes removed**.
 
 ## How to start
 
@@ -428,10 +497,18 @@ docker compose up --build
 - Country service (WireMock, provided): http://localhost:8088
 - Postgres: localhost:5432 (user/pass/db: `supplier`)
 
-The backend now boots cleanly end to end (Flyway migration → Hibernate schema validation →
-Tomcat) — verified via `docker compose up --build` and `curl http://localhost:8080/actuator/health`
-→ `200`. Calling any real endpoint still throws `UnsupportedOperationException` (500) since
-`application.service` is unimplemented — that's the next slice, not a startup problem.
+`docker compose up --build` boots all four services end to end (Flyway migration → Hibernate
+schema validation → Tomcat for the backend; `db`/`country-service` gate the backend via
+`depends_on: condition: service_healthy`, and the backend in turn gates the frontend the same way
+— see "Design decisions" §9). All 7 OpenAPI endpoints are live once the backend reports healthy.
+
+Optional environment overrides for the backend (sensible defaults apply if unset — see
+`docker-compose.yml` and `application.yml`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `COUNTRY_SERVICE_CONNECT_TIMEOUT_MS` | `1000` | Country-service HTTP connect timeout |
+| `COUNTRY_SERVICE_READ_TIMEOUT_MS` | `2000` | Country-service HTTP read/response timeout |
 
 ## Architecture
 
@@ -456,25 +533,33 @@ A single `UNIQUE(duns)` constraint (see the commented schema) makes these three 
 
 ## Design decisions
 
-### 1. FSM diagram vs. the written spec — two confirmed deviations
+### 1. FSM diagram vs. the written spec
 
 Before writing any code, the FSM diagram (`wiki/iop-techtest-fsm-supplier.png`) was compared
-against the README text and the task's own state-machine description. Two discrepancies were
-found and resolved with the stakeholder (recorded here so the reasoning survives into the
-interview):
+against the README text and the task's own state-machine description.
 
-**a) No `reapply()` — REFUSED is terminal, like BANNED.**
-The README's prose says "a refused candidacy allows the candidate to reapply," but the diagram
-draws `Declined` flowing straight into a terminal state with no edge back to `Candidate`.
-**Decision: the diagram wins.** `SupplierStatus.REFUSED` is terminal exactly like `BANNED` — there
-is no `reapply()` operation anywhere in the codebase. A new `POST /candidates` for a DUNS already
-in `REFUSED` status is rejected with the same `CandidateAlreadyExistsException` (409, "Candidate
-already exists") used for any other non-`BANNED` existing record — no new exception type was
-needed, the existing 6-exception table already covers it once `REFUSED` is treated as "a record
-exists." **This is a deliberate deviation from the literal README sentence — flag it explicitly
-in the interview**, since a reasonable alternative reading of the business text would implement
-reapply. See `domain.model.SupplierStatus` and `SupplierRecord` javadoc for the in-code record of
-this decision.
+**a) Reapply after refusal — implemented per the written requirement.**
+The README's prose is explicit: "a refused candidacy allows the candidate to reapply." This is
+implemented as `SupplierRecord#reapply(name, country, annualTurnover)`: `POST /candidates` for a
+DUNS currently in `REFUSED` status updates `name`/`country`/`annualTurnover` with the newly
+submitted values, discards any previous `sustainabilityRating` (a reapplication is a fresh
+candidacy, not a resumption of the old one), and moves the record back to `CANDIDATE`. Only
+`BANNED` is terminal now (`SupplierStatus#isTerminal`) — `REFUSED` has exactly one outgoing
+transition (`reapply`), every other mutating operation (`accept`/`refuse`/`ban`/`restrict`/
+`promote`) still rejects it. The transition is fully encapsulated in the aggregate: the
+application service (`RegisterCandidateService`) never mutates `SupplierRecord` fields directly,
+it only decides *which* aggregate method to call based on the existing record's status. See
+`domain.model.SupplierStatus`, `SupplierRecord#reapply` javadoc, and
+`RegisterCandidateServiceTest#reappliesWhenExistingRecordIsRefused`.
+
+`POST /candidates` full behavior for an existing DUNS:
+
+| Existing status | Behavior | HTTP |
+|---|---|---|
+| *(no record)* | `SupplierRecord.apply` — new candidacy | 201 |
+| `REFUSED` | `SupplierRecord.reapply` — fields updated, rating cleared, back to `CANDIDATE` | 201 |
+| `BANNED` | `SupplierBannedException` | 409 `{"info":"Supplier banned"}` |
+| any other (`CANDIDATE`, `ACTIVE`, `ON_PROBATION`) | `CandidateAlreadyExistsException` | 409 `{"info":"Candidate already exists"}` |
 
 **b) `Restrict`/`Promote` extension stubs, not wired to any endpoint.**
 The diagram also draws `Active --Restrict--> On Probation` and `On Probation --Promote--> Active`
@@ -531,11 +616,22 @@ into the JVM. **Implemented** (iteration 9) as a single native query in
 `SupplierRecordJpaRepository#findPotentialSuppliersRaw`: a `WITH ranked AS (...)` CTE computes
 `DENSE_RANK() OVER (PARTITION BY country ORDER BY annual_turnover)` over the full
 `ACTIVE`/`ON_PROBATION` population per country, then the outer query filters
-`annual_turnover > :rate`, computes the score, and applies `ORDER BY score DESC LIMIT/OFFSET`.
-Results are read via `PotentialSupplierProjection` (a Spring Data interface projection — `score`
-isn't a real column, so it can't be mapped onto `SupplierRecordEntity`). See the proposed indexes
-in `V1__create_supplier_record_table.sql` (`(country, annual_turnover)` for the bonus window
-function, `(status, annual_turnover)` for the filter/order).
+`annual_turnover > :rate`, computes the score, and applies
+`ORDER BY score DESC, duns ASC LIMIT/OFFSET`. Results are read via `PotentialSupplierProjection`
+(a Spring Data interface projection — `score` isn't a real column, so it can't be mapped onto
+`SupplierRecordEntity`). See the proposed indexes in `V1__create_supplier_record_table.sql`
+(`(country, annual_turnover)` for the bonus window function, `(status, annual_turnover)` for the
+filter/order).
+
+**Stable pagination (`duns` as tie-breaker):** `score` alone is not unique — several suppliers can
+land on the exact same value (identical turnover, rating, and bonus eligibility). `ORDER BY score
+DESC` alone gives Postgres no guarantee about the relative order of tied rows across separate
+`LIMIT`/`OFFSET` calls, which can duplicate a row on one page and silently drop another across
+consecutive pages. Breaking ties by `duns ASC` (already `UNIQUE`) makes the ordering total, so
+paging through tied rows is deterministic and lossless. Verified in
+`SupplierPersistenceAdapterTest#findPotentialSuppliersBreaksScoreTiesByDunsAscendingForStablePagination`
+with 4 suppliers sharing an identical score: two consecutive 2-row pages cover all 4 DUNS exactly
+once, in ascending order.
 
 **Benchmarked with `EXPLAIN (ANALYZE, BUFFERS)` against 300,000 seeded rows** (iteration 13): the
 `status` index is used by the planner as designed; the `country` index is not — the window
@@ -575,13 +671,162 @@ than fabricating a business rule to justify a 422 response. If a distinction bec
 country service, as opposed to a country that is merely banned), this is the natural place to add
 it.
 
+### 6. Optimistic locking and concurrency
+
+Two independent races were closed, both surfaced as `application/json` `409`s rather than a raw
+500 or (worse) a silent lost update:
+
+**a) Concurrent modification of the same row.** `SupplierRecordEntity` gained a `@Version` column
+(`version`, `V2__add_supplier_record_version.sql` — purely additive, does not touch `V1`). Two
+overlapping transactions that both read the same row before either commits will have the second
+one's flush fail with `org.springframework.orm.ObjectOptimisticLockingFailureException` instead of
+silently overwriting the first transaction's change. `SupplierPersistenceAdapter#save` was changed
+from `save()` to `saveAndFlush()` so the conflict surfaces synchronously inside the call, not
+whenever the enclosing `@Transactional` service method happens to commit. `GlobalExceptionHandler`
+maps it to `409 {"info":"Supplier record was modified concurrently, please retry"}` — no stack
+trace, no internal detail. Applies uniformly to `accept`, `refuse`, `ban`, and `reapply`, since all
+four go through the same `findByDuns` + mutate + `save` shape in `application.service`.
+
+Verified in `ConcurrencyIntegrationTest#concurrentUpdatesToTheSameRowDoNotSilentlyOverwriteEachOther`
+against real PostgreSQL: transaction B opens and reads a row (version 0), an independent
+`PROPAGATION_REQUIRES_NEW` transaction A reads the same row, refuses it, and commits (version 1);
+transaction B then tries to persist its own (individually valid) mutation built from its
+now-stale version-0 snapshot — this throws `ObjectOptimisticLockingFailureException`, and the
+final row is confirmed still `REFUSED` (A's change), never silently overwritten by B.
+
+**b) Concurrent insert for the same DUNS.** The `findByDuns`-then-`save` sequence in
+`RegisterCandidateService` has an inherent TOCTOU race: two requests can both observe "no record
+yet" and both attempt to insert. The `uk_supplier_record_duns` unique constraint remains the last
+line of defense, but a raw constraint violation must never reach the client as an unmapped 500.
+`SupplierPersistenceAdapter#save` catches `DataIntegrityViolationException`, inspects the cause
+chain for `org.hibernate.exception.ConstraintViolationException` with exactly this constraint name
+(deliberately narrow — any other integrity violation is rethrown as-is, never swallowed into a
+misleading "candidate already exists"), re-reads whichever row won the race, and throws
+`SupplierBannedException` if that row is `BANNED` or `CandidateAlreadyExistsException` otherwise —
+the same two exceptions `GlobalExceptionHandler` already maps for the non-racing case.
+
+Verified in
+`ConcurrencyIntegrationTest#concurrentInsertsForTheSameDunsAreSerializedByTheUniqueConstraint`:
+two real threads, synchronized with a `CyclicBarrier`, both call `save()` for a brand-new,
+identical DUNS. Exactly one succeeds, the other receives `CandidateAlreadyExistsException`, and
+exactly one row is ever persisted.
+
+**A real bug found only by testing against the live Docker stack, not by the test above alone**:
+the first version of `resolveConstraintViolation` re-read the "who won" row through the *same*
+ambient transaction as the failed `saveAndFlush` — fine when `save()` is called standalone (as
+`ConcurrencyIntegrationTest` does, where each repository call gets its own independent
+mini-transaction), but wrong when `save()` runs inside `RegisterCandidateService`'s single
+`@Transactional` method, exactly as the real `POST /candidates` controller does. A failed flush
+leaves Hibernate's persistence context poisoned; any further operation on the same session
+(including a plain read) re-triggers the identical auto-flush failure. Firing two real concurrent
+`POST /candidates` requests at the actual `docker compose up` stack for the same new DUNS
+reproduced this exactly: one request got `201`, the other an **unmapped `500`** — the opposite of
+this whole requirement. Fixed by re-reading the winning row through a brand-new, independent
+transaction (`TransactionTemplate` with `PROPAGATION_REQUIRES_NEW`, programmatic rather than
+`@Transactional` so it doesn't violate `HexagonalArchitectureTest`'s "only `application.service`
+uses `@Transactional`" rule). Re-verified both against a new permanent regression test,
+`RegisterCandidateServiceConcurrencyIntegrationTest` (calls the real `RegisterCandidateService`,
+not the adapter directly — the only way to exercise this exact bug), and by firing the same two
+real concurrent requests at the rebuilt Docker stack five more times in a row: `201`/`409` every
+time, never a `500`, and the retried duplicate afterward still correctly returns `409`.
+
+### 7. Real HTTP timeouts for the country-service call
+
+`resilience4j.timelimiter` in `application.yml` was dead configuration: a `@TimeLimiter` annotation
+only has an effect on a method returning a `CompletableFuture`/`Supplier` run asynchronously, and
+`CountryClient#getCountry` is a plain synchronous `RestClient` call — the `TimeLimiter` never
+applied to it. A country service that accepted the connection but then hung would block the
+calling thread indefinitely, `resilience4j.timelimiter` config notwithstanding. **Removed** the
+inert `resilience4j.timelimiter` block entirely rather than leave a comment saying "this doesn't
+work."
+
+**Replaced with real, effective timeouts** on `RestClientConfig`'s `SimpleClientHttpRequestFactory`
+(`setConnectTimeout`/`setReadTimeout`, plain `java.net.HttpURLConnection`-backed socket timeouts —
+these actually bound a blocking call, unlike the TimeLimiter), externalized via
+`country-service.connect-timeout-ms` / `country-service.read-timeout-ms`
+(`COUNTRY_SERVICE_CONNECT_TIMEOUT_MS` / `COUNTRY_SERVICE_READ_TIMEOUT_MS` env vars, defaulting to
+1000ms/2000ms — generous for a same-network call but bounded). The Circuit Breaker and fail-safe
+behavior are unchanged: a timeout throws `RestClientException` from `CountryClient`, which
+`CountryCheckAdapter`'s `@CircuitBreaker` fallback converts into `CountryCheckUnavailableException`,
+which `AcceptCandidateService` treats as "country is banned" — the candidate is not accepted.
+
+Verified in
+`CountryCheckAdapterTest#respondsWithinBoundedTimeAndFailsSafeOnSlowCountryService`: a WireMock
+stub configured with a 5-second fixed delay, and a 300ms read timeout for the test. The call
+returns `CountryCheckUnavailableException` in well under 2 seconds — proof the timeout is actually
+enforced, not merely declared in config.
+
+### 8. Frontend — out-of-order responses and filter/counter coherence
+
+**Request races.** `usePotentialSuppliers` now tracks the in-flight request via an
+`AbortController` (`hooks/usePotentialSuppliers.ts`): starting a new search (a new amount, or a
+page change) aborts whatever request is still pending, and every `then`/`catch`/`finally`
+callback checks its own controller's `signal.aborted` before touching state. This makes it
+impossible for a superseded request to overwrite `suppliers`/`total`/`error`/`loading`, regardless
+of which network call actually resolves first — verified in
+`Dashboard.test.tsx#ignoresAStaleResponseThatResolvesAfterANewerOne` by resolving the *second*
+request before the *first* and asserting the first's (stale) data never renders. A cancelled
+request is explicitly distinguished from a real failure (`AbortError` is checked before it would
+ever reach the user-facing error message) so cancellation never flashes an error. On unmount, an
+`isMountedRef` guard (set in the `useEffect` cleanup, alongside aborting the in-flight request)
+prevents any state update after the component is gone.
+
+**Filter/counter coherence.** Two problems, both fixed in `Dashboard`/`useClientFilters`:
+- Starting a new search (a different `rate`) now calls `useClientFilters#reset()`, clearing the
+  free-text search, selected countries, and selected ratings. Without this, a filter left over
+  from the previous result page (e.g. a country that doesn't appear in the new page at all) would
+  silently filter the new, non-empty result down to zero rows — indistinguishable in the UI from
+  the server genuinely returning nothing, which is a materially different situation.
+- `Pagination` now receives both the server-reported `total` and the post-filter `visibleCount`,
+  and — only while at least one client-side filter is active (`useClientFilters#hasActiveFilters`)
+  — renders `"{visible} visible suppliers out of {total} total"` instead of the plain
+  `"{total} suppliers found"`. The two numbers are never conflated: `total` always describes what
+  the server matched for the current `rate`/page; `visibleCount` is only what survives the
+  client-side name/DUNS/country/rating filters on the page that happens to be loaded right now.
+
+**Known, deliberate limitation of the current contract**: the OpenAPI's `GET /suppliers/potential`
+only exposes `rate`/`limit`/`offset` — there is no server-side text/country/rating filter and no
+server-side column-sort parameter. This means the dashboard's client-side search box, country
+filter, rating filter, and column-header sorting **only ever operate on the one page of results
+already loaded from the server** (at most `limit`, i.e. 10, rows) — never on the full matching
+dataset. A supplier that would match a filter but sits on page 3 will not appear until the user
+pages to it first. This is not a frontend bug; it is the direct, honest consequence of the
+contract as given (extending the API with new query parameters was explicitly out of scope per
+this task's own instructions). If server-side filtering/sorting were added to the OpenAPI
+contract, `usePotentialSuppliers`/`suppliersApi.ts` are the only places that would need to change.
+
+### 9. Docker Compose — healthchecks and pinned versions
+
+- `wiremock/wiremock:latest` pinned to `wiremock/wiremock:3.9.1` (matching the
+  `wiremock-standalone` test dependency version), so a rebuild months from now can't silently pick
+  up a breaking WireMock release.
+- `country-service` gets a `curl -f http://localhost:8080/__admin/mappings` healthcheck (WireMock
+  ships `curl`; verified by actually pulling the pinned image and exec-ing into it) — a 200 there
+  means the mock mappings are loaded and serving.
+- `backend` gets a `curl -f http://localhost:8080/actuator/health` healthcheck with a 30s
+  `start_period` (Flyway + Hibernate schema validation + Spring context startup routinely takes
+  20-40s per the progress log below) and 20 retries.
+- `backend` now `depends_on: country-service: condition: service_healthy` (was
+  `service_started`) — previously the backend could start accepting `accept` calls before WireMock
+  had actually finished loading its mappings.
+- `frontend` now `depends_on: backend: condition: service_healthy` (previously no condition at
+  all) — the dashboard's first real API call now has a much better chance of hitting a backend
+  that's actually ready, right after `docker compose up --build` returns.
+- `db`'s existing `pg_isready` healthcheck was already correct and is unchanged.
+- Both `.dockerignore` files were extended (`.git`, `*.log`, `.vscode`/`.idea`, `.DS_Store`,
+  `coverage` on the frontend side) — none of these belong in a build context, and some
+  (accidentally-committed IDE state, `.git`) could otherwise bloat the image or leak local file
+  paths into build logs.
+- The stale `# TODO: keep as "validate"...` and `# TODO: tune once integration-tested...` comments
+  in `application.yml` were removed — the first was rephrased as a plain explanatory comment (the
+  decision it described is not actually open, no fix needed), the second removed as part of
+  deleting the inert `resilience4j.timelimiter` block entirely (see decision 7 above).
+
 ## Aspectos dejados fuera y por qué (full list)
 
 - **422 on POST /candidates** — see above, no distinguishing business rule found.
 - **`Restrict`/`Promote` endpoints** — domain/application stubs exist, no controller, no OpenAPI
   contract for them (see decision 1b above).
-- **Reapply after refusal** — intentionally not implemented, per decision 1a above (deviates from
-  the literal README sentence; flag in interview).
 - **No authentication/authorization** — out of scope per the README, which describes "a
   supervisor" acting without specifying an auth model.
 - **No idempotency key handling on POST /candidates** — not requested by the OpenAPI (no header
@@ -599,23 +844,27 @@ it.
       the internal→external status mapping, the confirmed "ban only from ON_PROBATION" decision,
       the country-check fail-safe (verified by actually stopping `country-service` mid-test), and
       the potential-suppliers scoring/bonus formula matched exactly against the README's worked
-      example, all empirically confirmed, not just unit-tested. `[ ]` still open: nothing at the
-      endpoint level — remaining work is test coverage, code quality, and the frontend.
+      example, all empirically confirmed, not just unit-tested. Reapply-after-refusal (decision 1a,
+      iteration 16) closes the one behavior that was previously left unimplemented; optimistic
+      locking and the concurrent-DUNS race (decision 6) close the two remaining concurrency gaps.
 - [x] **Code quality** — removed the last stale "TODO: implement" javadoc from the 7
       `application.service` classes that had them (iteration 14; the domain/web/persistence
       layers were already clean). Constructor injection used throughout, no field injection
       anywhere in the codebase.
-- [x] **Testing — 100% complete: 74/74 green, zero `@Disabled` stubs.** `domain.model` (23 —
-      `SupplierRecordTest`, `DunsTest`, `CountryCodeTest`, `AnnualTurnoverTest`,
-      `SustainabilityRatingTest`, `SupplierStatusTest`), all 9 `application.service` classes (26),
-      both web mapper classes (6), both `@WebMvcTest` controller classes (11),
-      `SupplierPersistenceAdapterTest` (4, real Testcontainers PostgreSQL — includes the README's
-      exact worked example seeded as real rows, the single highest-value test in the suite), and
-      `CountryCheckAdapterTest` (4, embedded WireMock inside a narrowly-scoped `@SpringBootTest`
-      that exercises the real resilience4j Circuit Breaker AOP proxy, including proving the
-      short-circuit path receives zero real requests once the breaker trips). See "Progress log",
-      iterations 10-12. All 7 endpoints were additionally verified manually end-to-end via
-      `curl`/`psql`/stopping containers against real Postgres and WireMock.
+- [x] **Testing — 100% green, zero `@Disabled` stubs.** `domain.model`, all `application.service`
+      classes, both web mapper classes, both `@WebMvcTest` controller classes,
+      `SupplierPersistenceAdapterTest` (real Testcontainers PostgreSQL — includes the README's
+      exact worked example seeded as real rows, plus the score-tie stable-pagination test), and
+      `CountryCheckAdapterTest` (embedded WireMock inside a narrowly-scoped `@SpringBootTest` that
+      exercises the real resilience4j Circuit Breaker AOP proxy, including proving the
+      short-circuit path receives zero real requests once the breaker trips, and the new bounded-
+      -time timeout test). See "Progress log", iterations 10-12 and 16 for exact counts. Iteration
+      16 additionally adds `ConcurrencyIntegrationTest` (two real-Postgres tests: optimistic-lock
+      lost-update prevention and the concurrent-duplicate-DUNS race) and the frontend's
+      `Dashboard.test.tsx` (10 integration tests covering loading/success/error/empty/pagination/
+      filters/default-and-toggled-sort/request-race/filter-reset). All 7 endpoints were also
+      verified manually end-to-end via `curl`/`psql`/stopping containers against real Postgres and
+      WireMock.
 - [x] **Performance and scalability** — confirmed `findPotentialSuppliers` never materializes
       more than one page of entities (everything happens in one native SQL query). `EXPLAIN
       (ANALYZE, BUFFERS)` run against 300,000 seeded rows (iteration 13): the
@@ -632,10 +881,16 @@ it.
       real browser against the real backend, not just by reading the code. See "Progress log"
       iteration 15 for the two real bugs (native `min` validation swallowing the custom message;
       the missing client-filtered empty state) and the CORS gap it also surfaced and fixed.
+      Iteration 16 adds request-race cancellation (`AbortController`), filter reset on new search,
+      the visible-vs-total count distinction, and moves `aria-sort` onto the `<th>` with an
+      accessible sorted-direction announcement for screen readers (see decision 8/9).
 - [x] **Docker Compose** — `docker compose up --build` (all four services) boots cleanly end to
       end; verified by seeding real data through the live API and driving the running dashboard in
       a browser, covering search, sorting, filtering, both empty-state paths, and pagination
-      across a real second page. See "Progress log" iteration 15.
+      across a real second page. See "Progress log" iteration 15. Iteration 16 adds real
+      healthchecks for `backend`/`country-service`, `service_healthy` dependency conditions, and
+      pins the WireMock image version (see decision 9).
 - [x] **Documentation** — this file's "Design decisions", "Progress log", and checklist are kept
-      in sync with the frontend work in iteration 15; the two confirmed FSM deviations from
-      earlier iterations were not revisited by the frontend work and remain as documented above.
+      in sync with iteration 16's work: reapply-after-refusal replaces the earlier no-reapply
+      decision (no claim that the diagram overrides the written requirement remains anywhere in
+      this file), and the new concurrency/timeout/frontend/Docker decisions are documented above.
