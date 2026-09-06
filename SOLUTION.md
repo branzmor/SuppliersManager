@@ -10,14 +10,18 @@ Estado de la implementación:
 
 - **Backend**: los 7 endpoints definidos en el contrato OpenAPI están implementados y verificados
   end to end contra PostgreSQL real y, para `accept`, contra el servicio de países mockeado a
-  través de un Circuit Breaker de resilience4j realmente conectado a la petición HTTP.
+  través de un Circuit Breaker de resilience4j realmente conectado a la petición HTTP. La
+  compatibilidad con el contrato OpenAPI se verifica además de forma automática (ver
+  [Validación automática contra el contrato OpenAPI](#validación-automática-contra-el-contrato-openapi)).
 - **Frontend**: el dashboard de proveedores potenciales implementa todos los requisitos de la
   tabla de la sección "Frontend" del `Readme.md` (búsqueda con validación de mínimo 250, tabla
   ordenable/filtrable, filtros de cliente por nombre/DUNS/país/rating, paginación `limit`/`offset`
-  con distinción entre total y visibles, estados de carga/error/vacío, y protección frente a
-  respuestas de red fuera de orden mediante `AbortController`).
-- **Pruebas**: la suite de backend cubre dominio, aplicación, mappers, controladores, persistencia
-  (con Testcontainers), el adaptador del servicio de países (con WireMock embebido) y la
+  con distinción entre total y visibles, estados de carga/error/vacío —con mensajes distintos según
+  su origen, ver [Estados vacíos del dashboard](#estados-vacíos-del-dashboard)—, y protección frente
+  a respuestas de red fuera de orden mediante `AbortController`).
+- **Pruebas**: la suite de backend cubre dominio, aplicación, mappers, controladores, contrato
+  OpenAPI, persistencia (con Testcontainers), concurrencia/rollback, el adaptador del servicio de
+  países (con WireMock embebido, en contextos separados para evitar inestabilidad temporal) y la
   arquitectura hexagonal (ArchUnit); la suite de frontend cubre formateadores, hooks y el
   `Dashboard` de forma integrada. Los recuentos exactos y el resultado de la última ejecución en
   este entorno están en [Cómo ejecutar las pruebas](#cómo-ejecutar-las-pruebas).
@@ -77,19 +81,15 @@ cd backend
 Última ejecución verificada en este entorno (macOS, Docker Desktop, Java 25 vía `sdkman` como JDK
 del sistema, Maven 3.9.9 descargado por el wrapper):
 
-- `./mvnw test`: **86 tests ejecutados, 0 fallos.** Dos tests de `CountryCheckAdapterTest`
-  (`returnsFalseWhenCountryNotBanned`/`returnsTrueWhenCountryBanned`) mostraron errores
-  intermitentes de `Read timed out` en este entorno concreto: esa clase configura un timeout de
-  lectura de 300ms contra un WireMock embebido, y bajo la carga de este host (compilaciones,
-  `npm ci`, tests de frontend y `docker pull` corriendo en paralelo durante la verificación) el
-  margen de 300ms se superó ocasionalmente por motivos de entorno, no por el código bajo test — el
-  resto de tests de la misma clase (Circuit Breaker, timeout real, fail-safe) pasaron sin
-  problema. No se ha modificado el test ni su timeout, al ser una prueba, no un cambio funcional,
-  de los descritos en el alcance de esta limpieza.
-- `./mvnw package` (que por defecto vuelve a ejecutar la suite): en este entorno concreto no
-  siempre llega a `BUILD SUCCESS`, por el mismo test intermitente. El propio Dockerfile del
-  backend empaqueta con `mvn package -DskipTests` (los tests ya se ejecutan por separado en CI),
-  y `./mvnw package -DskipTests` produce el `.jar` correctamente en este entorno.
+- `./mvnw test` ejecutado **tres veces consecutivas**: **124 tests ejecutados, 0 fallos** en las
+  tres ejecuciones. La suite de `CountryCheckAdapterTest` (antes una única clase con un timeout
+  corto compartido entre casos funcionales y el caso de timeout lento, causa de los fallos
+  intermitentes de `Read timed out` reportados anteriormente en este documento) está ahora separada
+  en tres clases con contextos Spring independientes — ver
+  [Estabilidad de los tests del servicio de países](#estabilidad-de-los-tests-del-servicio-de-países) —
+  y no ha mostrado ningún fallo intermitente en ninguna de las tres ejecuciones.
+- `./mvnw package`: **BUILD SUCCESS** (vuelve a ejecutar los 124 tests como parte del ciclo
+  `test`, sin `-DskipTests`).
 
 Los tests que dependen de Testcontainers necesitan un daemon Docker accesible. En este entorno
 concreto hizo falta `TESTCONTAINERS_RYUK_DISABLED=true` para que el sidecar de limpieza de
@@ -110,9 +110,10 @@ npm run build
 
 Última ejecución verificada en este entorno:
 
-- `npm test` (Vitest): **29/29 tests, 5 ficheros, 0 fallos**
+- `npm test` (Vitest): **30/30 tests, 5 ficheros, 0 fallos**
   (`formatters.test.ts`, `useClientFilters.test.ts`, `useTableSort.test.ts`,
-  `SearchForm.test.tsx`, `Dashboard.test.tsx`).
+  `SearchForm.test.tsx`, `Dashboard.test.tsx` — este último con los dos casos de estado vacío
+  verificados por separado, ver [Estados vacíos del dashboard](#estados-vacíos-del-dashboard)).
 - `npm run lint` (ESLint 9, flat config): sin errores ni avisos.
 - `npm run build` (`tsc -b && vite build`): compilación TypeScript y build de Vite correctos.
 
@@ -256,6 +257,104 @@ futuro se define una condición diferenciada (por ejemplo, un código de país s
 pero inexistente para el servicio de países, distinto de un país meramente no aprobado), este es
 el lugar natural para añadirla.
 
+## Validación automática contra el contrato OpenAPI
+
+`infrastructure.web.contract.OpenApiContractTest` (36 tests) valida automáticamente, contra el
+propio fichero `wiki/itx-iop_tech-supplier_flow-main-openapi3_1.yaml` (nunca copiado ni
+modificado — se referencia por ruta relativa desde `backend/`), que la implementación real de los
+7 endpoints es compatible con el contrato: rutas, métodos, parámetros (tipo, `minimum`/`maximum`),
+cuerpos de petición y respuesta (propiedades requeridas, tipos, enums), `content-type` y código
+HTTP, para cada código declarado que la implementación puede producir (`POST /candidates`:
+201/400/409; `GET /candidates/{duns}`: 200/404; `POST /candidates/{duns}/accept`: 204/400/404/409;
+`POST /candidates/{duns}/refuse`: 204/404/409; `GET /suppliers/{duns}`: 200/404;
+`POST /suppliers/{duns}/ban`: 204/404/409; `GET /suppliers/potential`: 200/400), más los casos
+límite: DUNS mínimo/máximo, `rate = 250`/`< 250`, `limit = 1/10/0/11`, `offset = 0/< 0`, rating
+válido/inválido, campos obligatorios ausentes, y una respuesta de `GET /suppliers/potential` con un
+elemento completamente poblado (todos los campos de `PotentialSupplier`).
+
+**Con una excepción real y documentada, no oculta bajo el "36/36 en verde"**: un `duns` de path
+sintácticamente válido pero fuera de `[100000000, 999999999]` (`GET /candidates/{duns}`,
+`GET /suppliers/{duns}`, `POST /candidates/{duns}/refuse`, `POST /suppliers/{duns}/ban`) produce hoy
+un `400` que el contrato **no declara** para esas operaciones (solo declaran 2xx/404/409) — ver
+[el hallazgo detallado más abajo](#otro-hallazgo-real-documentado-pero-no-corregido-fuera-de-alcance).
+Ese caso concreto se comprueba solo por código de estado, deliberadamente sin encadenar la
+validación de contrato, porque ninguna respuesta 400 está declarada ahí para que el test pueda
+compararse contra ella.
+
+### Librería y por qué
+
+`com.atlassian.oai:swagger-request-validator-mockmvc` (ahora renombrada
+`openapi-request-validator`) es la librería más madura con un `ResultMatcher` de MockMvc ya
+integrado para Spring Boot — exactamente la pieza que este test usa (`OpenApiInteractionValidator`
++ `openApi().isValid(...)`). Su versión actual (3.0.0) exige Spring Framework 7/Spring Boot 4, así
+que se fija deliberadamente la última versión compatible con Spring Boot 3.3.4: **2.46.1** (`pom.xml`,
+scope `test`). Se añade también `org.awaitility:awaitility` (scope `test`), usada en la suite del
+Circuit Breaker (ver más abajo), sin relación con esta librería.
+
+### Límite real de compatibilidad con OpenAPI 3.1 (verificado empíricamente, no asumido)
+
+El parser subyacente de esta versión (swagger-parser-v3) es anterior al soporte completo de OpenAPI
+3.1: lee un documento `openapi: 3.1.0` sin rechazarlo, pero lo valida con semántica de OpenAPI
+3.0/JSON Schema Draft-4, no con el dialecto JSON Schema 2020-12 en el que se basa 3.1. Para
+**este** contrato en concreto, comprobado ejecutando la suite completa (36/36 tests en verde):
+
+- **Se valida por completo**: rutas, métodos, presencia/tipo/límites de parámetros de ruta y
+  query, cuerpos de petición obligatorios, códigos de estado de respuesta, `content-type` de
+  respuesta, y forma del JSON (propiedades requeridas, tipos, `minLength`/`maxLength`, límites
+  numéricos, enums) — ninguno de los esquemas de este contrato usa una construcción exclusiva de
+  3.1 (no hay `type` como array para nulabilidad, ni `prefixItems`, ni `const`, ni forma booleana de
+  `exclusiveMinimum`/`exclusiveMaximum`).
+- **No se valida / se ignora en silencio**: la anotación `examples: [...]` en plural (estilo 3.1;
+  3.0 usa `example` singular) presente en todo el contrato. Es una anotación no normativa, no una
+  restricción — un parser que no la entiende simplemente no valida nada a partir de ella, no genera
+  falsos negativos sobre restricciones reales.
+- **Gotcha documentado de la propia librería, no un problema de 3.1**: por defecto, esta versión
+  inyecta `additionalProperties: false` en cada rama de un `allOf` (aquí, `Supplier` y
+  `PotentialSupplier`, compuestos como `allOf: [Candidate, {campos extra}]`), lo que rompe
+  cualquier composición `allOf` porque ninguna rama declara el 100% de las propiedades del objeto
+  final — un problema de JSON Schema general con `allOf`, no específico de 3.1. Se desactiva
+  exactamente esa comprobación (`LevelResolver` con la clave
+  `validation.schema.additionalProperties` a `IGNORE`, el propio mecanismo que la librería expone
+  para este caso — ver el código fuente de `SchemaValidator`), dejando activas todas las demás
+  reglas de validación de esquema.
+
+En resumen: para un contrato como este —etiquetado 3.1 pero sin usar construcciones exclusivas de
+3.1— la librería da una validación estructural/de tipos/de rangos totalmente fiel. **No** sería
+fiable contra un contrato que sí usara `type: [string, "null"]`, `prefixItems` o la forma numérica
+de `exclusiveMinimum`/`exclusiveMaximum` — eso exigiría un validador nativo de JSON Schema 2020-12
+(p. ej. `networknt/json-schema-validator`), a costa de perder la integración lista para usar con
+MockMvc que se aprovecha aquí.
+
+### Peticiones deliberadamente inválidas: solo se valida la respuesta
+
+Para los casos límite que fuerzan un 400 (campo obligatorio ausente, DUNS/`rate`/`limit`/`offset`
+fuera de rango, rating con un valor de enum inválido), la propia petición viola el contrato por
+construcción — no tiene sentido pedirle a la librería que valide una petición deliberadamente
+inválida contra su propio esquema. Estos tests usan `matchesResponseContractOnly()` (helper propio,
+`OpenApiInteractionValidator#validateResponse`), que valida solo que la respuesta —el 400 declarado
+y su esquema `Error`— es la que promete el contrato, sin exigir que la petición en sí sea válida.
+
+### Hallazgo real detectado y corregido dentro de este alcance
+
+Al escribir el caso "rating con valor de enum inválido" (`{"sustainabilityRating":"Z"}`), la
+petición fallaba en la deserialización JSON antes de llegar a Bean Validation
+(`HttpMessageNotReadableException`), y `GlobalExceptionHandler` no la capturaba — el 400 resultante
+llegaba con el cuerpo vacío, incumpliendo el esquema `Error` que el contrato exige para todo 400.
+Se añadió un `@ExceptionHandler(HttpMessageNotReadableException.class)` (mismo patrón que el resto
+de la clase: 400 + `{"info": "..."}"`) — no es una regla de negocio nueva ni un endpoint nuevo, es
+hacer que una respuesta 400 ya declarada cumpla el esquema ya declarado.
+
+### Otro hallazgo real, documentado pero no corregido (fuera de alcance)
+
+`getCandidateReturns400ForADunsOutsideTheContractRangeUndeclaredButReal` deja constancia de que un
+DUNS sintácticamente válido pero fuera de `[100000000, 999999999]` en `GET /candidates/{duns}`
+produce hoy un 400 (vía `IllegalArgumentException` al construir `new Duns(duns)` en la rama de "no
+encontrado", tanto en el controlador como en `GetCandidateService`), aunque el contrato solo declara
+200/404 para esa operación — nunca 400. El mismo patrón (construir el value object antes de decidir
+"no encontrado") se repite en los demás endpoints con `{duns}`. No se corrige aquí: hacerlo
+implicaría cambiar el comportamiento actual de varios casos de uso, lo cual excede el alcance de
+"añadir validación de contrato" — queda documentado como lo pide el enunciado, no oculto.
+
 ## Cálculo de proveedores potenciales
 
 ```
@@ -322,7 +421,26 @@ uniforme a `accept`, `refuse`, `ban` y `reapply`.
 
 Verificado en
 `ConcurrencyIntegrationTest#concurrentUpdatesToTheSameRowDoNotSilentlyOverwriteEachOther` contra
-PostgreSQL real.
+PostgreSQL real — a nivel de `SupplierPersistenceAdapter`, orquestando manualmente dos transacciones
+superpuestas con `TransactionTemplate` para demostrar que el conflicto de versión impide una
+actualización perdida y que el estado final en base de datos es el de la transacción que ganó (no
+una mezcla de ambas).
+
+**Rollback a través del caso de uso real**: ese test no pasa por el método `@Transactional` real de
+ningún servicio de aplicación (usa el adaptador directamente). Para cubrir exactamente eso —que
+`AcceptCandidateService#accept`, el caso de uso real detrás de `POST /candidates/{duns}/accept`,
+haga rollback completo y no dejar una transición a medias cuando el optimistic locking detecta un
+conflicto—, `AcceptCandidateServiceConcurrencyIntegrationTest#concurrentAcceptCallsForTheSameCandidateNeverPersistAMixOfBothOutcomes`
+lanza dos hilos reales contra el mismo `AcceptCandidateUseCase.accept(duns, rating)` para un mismo
+candidato, cada uno pidiendo un rating distinto (`A` → `ACTIVE`, `D` → `ON_PROBATION`) sobre
+PostgreSQL real (Testcontainers). Verifica tanto la excepción (`ObjectOptimisticLockingFailureException`
+en el hilo perdedor) como el estado final en base de datos, y la aserción crítica es más fuerte que
+"el valor antiguo sobrevivió": el registro final debe ser **exactamente** una de las dos transiciones
+completas (`ACTIVE`+`A` o `ON_PROBATION`+`D`), nunca una combinación imposible como `ACTIVE`+`D` —
+que es justo lo que produciría una transacción parcialmente aplicada. No duplica la cobertura de
+`ConcurrencyIntegrationTest`: prueba una capa distinta (el servicio `@Transactional` real, bajo
+concurrencia real de hilos, no una orquestación manual de transacciones) con una aserción de
+atomicidad más exigente.
 
 ### Restricción única y la carrera de inserción concurrente
 
@@ -368,10 +486,35 @@ una llamada bloqueante; un `@TimeLimiter` de resilience4j no habría tenido efec
 síncrona como `CountryClient#getCountry`, por lo que se eliminó en lugar de dejarlo como
 configuración inerte.
 
-Verificado en `CountryCheckAdapterTest#respondsWithinBoundedTimeAndFailsSafeOnSlowCountryService`
-(WireMock con 5s de retraso, timeout de test de 300ms, resuelto en bien menos de 2s) y en
-`#circuitBreakerOpensAfterRepeatedFailures` (5 fallos reales abren el breaker; una 6ª llamada no
-genera tráfico hacia WireMock, confirmando el cortocircuito).
+### Estabilidad de los tests del servicio de países
+
+La suite de `CountryCheckAdapter` está dividida en **tres clases**, cada una con su propio contexto
+Spring (y por tanto su propia instancia del Circuit Breaker `countryService`, sin estado compartido
+entre clases):
+
+| Clase | Qué cubre | Timeout HTTP del contexto |
+|---|---|---|
+| `CountryCheckAdapterTest` | Casos funcionales 200/404 y `circuitBreakerOpensAfterRepeatedFailures` (el breaker abre tras 5 fallos y corta el tráfico hacia WireMock) | Los valores por defecto de `application.yml` (1000ms/2000ms) |
+| `CountryCheckAdapterTimeoutTest` | `respondsWithinBoundedTimeAndFailsSafeOnSlowCountryService`: WireMock con 5s de retraso deliberado, la llamada se corta muchísimo antes de esos 5s | 300ms, deliberadamente corto — solo para este escenario |
+| `CountryCheckAdapterCircuitBreakerRecoveryTest` | `circuitBreakerTransitionsFromOpenToHalfOpenToClosedOnceTheCountryServiceRecovers`: `OPEN` → `HALF_OPEN` → `CLOSED` una vez el servicio de países vuelve a responder | HTTP por defecto; `wait-duration-in-open-state=300ms` y `permitted-number-of-calls-in-half-open-state=1` solo en este contexto de test (no se toca el valor de producción, `10s` en `application.yml`) |
+
+Antes de esta separación, un único timeout corto (300ms) se aplicaba a toda la clase, incluidos los
+casos funcionales que stubean una respuesta casi instantánea de WireMock — bajo carga del host
+(compilaciones, otros tests, `docker pull` en paralelo), ese margen de 300ms se superaba
+ocasionalmente por motivos de entorno y no del código bajo test, produciendo fallos intermitentes de
+`Read timed out`. Separar el escenario lento en su propio contexto permite que los casos funcionales
+usen un timeout realista (el de producción) mientras el caso de timeout sigue siendo determinista
+(300ms de margen frente a los 5s del stub deja sobra de sobra incluso con jitter del host).
+
+La transición `HALF_OPEN`/`CLOSED` se verifica sin `Thread.sleep`: se usa Awaitility
+(`org.awaitility:awaitility`, scope test) haciendo *polling* acotado (intervalo de 50ms, máximo 3s)
+que reintenta la llamada real hasta que el breaker deja pasar la petición de prueba tras agotarse
+`wait-duration-in-open-state` y esta tiene éxito. Un listener de eventos del propio
+`CircuitBreaker` registra la secuencia de transiciones y la prueba afirma explícitamente que
+`HALF_OPEN` ocurrió antes que el `CLOSED` final, no solo el estado final.
+
+Verificado con tres ejecuciones consecutivas de `./mvnw test` sin ningún fallo intermitente — ver
+[Cómo ejecutar las pruebas](#cómo-ejecutar-las-pruebas).
 
 ## Frontend
 
@@ -402,6 +545,26 @@ callbacks `then`/`catch`/`finally` comprueban `signal.aborted` antes de tocar el
 el nuevo resultado vacío de forma indistinguible de que el servidor no devolvió nada. `Pagination`
 recibe el `total` del servidor y el `visibleCount` tras filtrar, y muestra
 `"{visible} visible suppliers out of {total} total"` solo mientras hay algún filtro activo.
+
+### Estados vacíos del dashboard
+
+Existen dos causas distintas para que la tabla de resultados quede vacía, y cada una tiene su
+propio mensaje — antes mostraban el mismo texto genérico, indistinguible entre sí:
+
+| Causa | Mensaje | Dónde se decide |
+|---|---|---|
+| El backend devuelve cero proveedores elegibles para el `rate` buscado | "No potential suppliers found for this order amount." | `Dashboard` — `suppliers.length === 0` (antes de aplicar ningún filtro de cliente) |
+| El backend devolvió proveedores, pero los filtros de cliente (nombre/DUNS/país/rating) ocultan todos los de la página cargada | "No suppliers on this page match the selected filters." | `Dashboard` — `visibleSuppliers.length === 0` (después de `useClientFilters#apply`) |
+
+`EmptyState` es un único componente parametrizado por una prop `reason: 'no-results' |
+'filtered-out'` (tipada, sin cadenas mágicas en el punto de uso) en lugar de dos componentes
+duplicados — el marcado (`role="status"`, `aria-live="polite"`) es idéntico en ambos casos, solo
+cambia el texto. La lógica de paginación y el conteo `"{visible} visible suppliers out of {total}
+total"` no cambian: ambos estados vacíos conviven con `FiltersBar`/`Pagination` exactamente igual
+que antes (el segundo caso, con filtros activos, sigue mostrando el contador de visibles frente al
+total). Verificado en dos casos separados de `Dashboard.test.tsx` y manualmente contra la pila de
+`docker compose up` (importe sin resultados vs. filtro de texto sin coincidencias sobre una página
+no vacía).
 
 **Limitación deliberada del contrato actual**: `GET /suppliers/potential` solo expone
 `rate`/`limit`/`offset` — no hay filtro ni ordenación en servidor. Por tanto, la búsqueda de texto,
@@ -460,11 +623,12 @@ de IDE, logs y (en el frontend) `coverage`.
 | `application.service` | Mockito, sin contexto de Spring | Casos de uso, orquestación de puertos, mapeo de excepciones |
 | `infrastructure.web.mapper` | JUnit puro | Mapeo interno ↔ DTO, incluida la traducción de estado |
 | `infrastructure.web.controller` | `@WebMvcTest` + `MockMvc`, casos de uso mockeados | Códigos HTTP y cuerpo exacto `{"info": "..."}` de `GlobalExceptionHandler` |
+| `infrastructure.web.contract` | `@WebMvcTest` + `MockMvc` + swagger-request-validator | Compatibilidad automática de los 7 endpoints con `wiki/itx-iop_tech-supplier_flow-main-openapi3_1.yaml` (rutas, parámetros, cuerpos, códigos), incluidos los casos límite de DUNS/`rate`/`limit`/`offset`/rating |
 | `infrastructure.persistence` | `@SpringBootTest` + Testcontainers (PostgreSQL real) | Upsert por DUNS, filtro de elegibilidad, score/bonus contra el ejemplo del `Readme.md`, paginación estable |
-| `infrastructure.external.country` | `@SpringBootTest` acotado + WireMock embebido | Circuit Breaker realmente conectado (AOP), timeouts efectivos |
-| Concurrencia | Testcontainers + hilos reales | Optimistic locking, carrera de inserción concurrente |
+| `infrastructure.external.country` | `@SpringBootTest` acotado + WireMock embebido, en tres contextos separados | Circuit Breaker realmente conectado (AOP), timeouts efectivos, recuperación `OPEN`→`HALF_OPEN`→`CLOSED` (Awaitility, sin `Thread.sleep`) |
+| Concurrencia y rollback | Testcontainers + hilos reales | Optimistic locking a nivel de adaptador y a través del caso de uso `@Transactional` real (sin transición parcial persistida), carrera de inserción concurrente |
 | Arquitectura | ArchUnit | Las 4 reglas de la arquitectura hexagonal |
-| Frontend | Vitest + Testing Library | Formateadores, hooks de filtro/orden, validación de `SearchForm`, `Dashboard` de forma integrada (carga, éxito, error, vacío, paginación, filtros, orden, petición fuera de orden, reset de filtros) |
+| Frontend | Vitest + Testing Library | Formateadores, hooks de filtro/orden, validación de `SearchForm`, `Dashboard` de forma integrada (carga, éxito, error, los dos estados vacíos por separado, paginación, filtros, orden, petición fuera de orden, reset de filtros) |
 
 Los recuentos exactos de la última ejecución están en
 [Cómo ejecutar las pruebas](#cómo-ejecutar-las-pruebas).
@@ -481,6 +645,8 @@ Los recuentos exactos de la última ejecución están en
 | `saveAndFlush` + `TransactionTemplate REQUIRES_NEW` para releer tras violar la restricción única | Ver [Persistencia, integridad y concurrencia](#persistencia-integridad-y-concurrencia) |
 | Sin autenticación/autorización | Fuera de alcance: el `Readme.md` describe "un supervisor" sin especificar modelo de autenticación |
 | Sin idempotency key en `POST /candidates` | No la pide el OpenAPI (sin parámetro de cabecera definido) |
+| `swagger-request-validator-mockmvc` fijado a `2.46.1`, no a la última (`3.0.0`) | `3.0.0` exige Spring Framework 7/Spring Boot 4; este proyecto usa Spring Boot 3.3.4 — ver [Validación automática contra el contrato OpenAPI](#validación-automática-contra-el-contrato-openapi) |
+| `EmptyState` parametrizado por prop (`reason`), no dos componentes | Mismo marcado accesible en ambos casos, solo cambia el texto; evita duplicar el componente |
 
 ## Aspectos no implementados
 
@@ -497,6 +663,10 @@ Los recuentos exactos de la última ejecución están en
   [Rendimiento y escalabilidad](#rendimiento-y-escalabilidad).
 - **Autenticación/autorización** — fuera de alcance según el `Readme.md`.
 - **Idempotency key en `POST /candidates`** — no requerido por el contrato.
+- **400 no declarado para un DUNS fuera de rango en los endpoints `{duns}`** — ver
+  [el hallazgo documentado](#validación-automática-contra-el-contrato-openapi). Corregirlo
+  implicaría cambiar el comportamiento de varios casos de uso existentes, fuera del alcance de
+  "añadir validación automática de contrato".
 
 ## Matriz de cumplimiento
 
@@ -518,9 +688,12 @@ Los recuentos exactos de la última ejecución están en
 | Búsqueda por importe con mínimo 250 | `SearchForm` | `SearchForm.test.tsx` |
 | Tabla de resultados con las 6 columnas | `ResultsTable`, `utils/formatters` | `formatters.test.ts` |
 | Orden por defecto score descendente | `useTableSort` | `useTableSort.test.ts`, `Dashboard.test.tsx` |
-| Estados de carga/error/vacío | `LoadingIndicator`, `ErrorMessage`, `EmptyState` | `Dashboard.test.tsx` |
+| Estados de carga/error/vacío (dos causas de vacío distinguidas) | `LoadingIndicator`, `ErrorMessage`, `EmptyState` | `Dashboard.test.tsx` (un test por causa) |
 | Filtro de cliente por nombre/DUNS/país/rating | `useClientFilters` | `useClientFilters.test.ts`, `Dashboard.test.tsx` |
 | Ordenación por columna al hacer clic | `useTableSort` | `Dashboard.test.tsx#togglesSortDirectionWhenAColumnHeaderIsClicked` |
 | Paginación `limit`/`offset` con recuento | `Pagination`, `usePotentialSuppliers` | `Dashboard.test.tsx#supportsPaginatingWithLimitOffsetAndShowsTheTotalCount` |
 | `docker compose up` levanta la solución completa | `docker-compose.yml`, healthchecks | Verificación manual, ver [Cómo ejecutar la solución](#cómo-ejecutar-la-solución) |
 | Arquitectura hexagonal / DDD | Estructura de paquetes + ArchUnit | `HexagonalArchitectureTest` |
+| Compatibilidad de los 7 endpoints con el contrato OpenAPI | `OpenApiInteractionValidator` (swagger-request-validator) | `OpenApiContractTest` (36 tests) |
+| Rollback de una transición ante conflicto de optimistic locking, sin caso de uso ficticio | `AcceptCandidateService` (real, `@Transactional`) | `AcceptCandidateServiceConcurrencyIntegrationTest` |
+| Tests del servicio de países deterministas (sin timeout compartido inestable) | 3 contextos Spring separados | `CountryCheckAdapterTest`, `CountryCheckAdapterTimeoutTest`, `CountryCheckAdapterCircuitBreakerRecoveryTest` |
