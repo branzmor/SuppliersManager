@@ -2,7 +2,7 @@
 
 ## Resumen
 
-Servicio de gestión de proveedores de Inditex, implementado como una solución full-stack sobre
+Servicio de gestión de proveedores de la empresa, implementado como una solución full-stack sobre
 arquitectura hexagonal (backend) y una SPA en React (frontend), orquestados con Docker Compose
 junto a PostgreSQL y el mock del servicio de países (WireMock).
 
@@ -60,8 +60,8 @@ docker compose down
 | Servicio | URL | Notas |
 |---|---|---|
 | Frontend | http://localhost:5173 | Dashboard servido por Nginx |
-| Backend | http://localhost:8080 | API REST, contrato en `wiki/itx-iop_tech-supplier_flow-main-openapi3_1.yaml` |
-| Country service (WireMock) | http://localhost:8088 | Mock proporcionado, contrato en `wiki/itx-iop_tech-supplier_flow-country-openapi3_1.yaml` |
+| Backend | http://localhost:8080 | API REST, contrato en `wiki/iop_tech-supplier_flow-main-openapi3_1.yaml` |
+| Country service (WireMock) | http://localhost:8088 | Mock proporcionado, contrato en `wiki/iop_tech-supplier_flow-country-openapi3_1.yaml` |
 | Postgres | localhost:5432 | Usuario/contraseña/BD: `supplier` |
 
 Endpoint de salud del backend: `GET http://localhost:8080/actuator/health`.
@@ -234,7 +234,7 @@ operaciones, solo `infrastructure.web` necesitaría código nuevo.
 
 ## Contrato API
 
-Los 7 endpoints de `wiki/itx-iop_tech-supplier_flow-main-openapi3_1.yaml` están implementados:
+Los 7 endpoints de `wiki/iop_tech-supplier_flow-main-openapi3_1.yaml` están implementados:
 
 | Método y ruta | Descripción |
 |---|---|
@@ -260,7 +260,7 @@ el lugar natural para añadirla.
 ## Validación automática contra el contrato OpenAPI
 
 `infrastructure.web.contract.OpenApiContractTest` (36 tests) valida automáticamente, contra el
-propio fichero `wiki/itx-iop_tech-supplier_flow-main-openapi3_1.yaml` (nunca copiado ni
+propio fichero `wiki/iop_tech-supplier_flow-main-openapi3_1.yaml` (nunca copiado ni
 modificado — se referencia por ruta relativa desde `backend/`), que la implementación real de los
 7 endpoints es compatible con el contrato: rutas, métodos, parámetros (tipo, `minimum`/`maximum`),
 cuerpos de petición y respuesta (propiedades requeridas, tipos, enums), `content-type` y código
@@ -623,7 +623,7 @@ de IDE, logs y (en el frontend) `coverage`.
 | `application.service` | Mockito, sin contexto de Spring | Casos de uso, orquestación de puertos, mapeo de excepciones |
 | `infrastructure.web.mapper` | JUnit puro | Mapeo interno ↔ DTO, incluida la traducción de estado |
 | `infrastructure.web.controller` | `@WebMvcTest` + `MockMvc`, casos de uso mockeados | Códigos HTTP y cuerpo exacto `{"info": "..."}` de `GlobalExceptionHandler` |
-| `infrastructure.web.contract` | `@WebMvcTest` + `MockMvc` + swagger-request-validator | Compatibilidad automática de los 7 endpoints con `wiki/itx-iop_tech-supplier_flow-main-openapi3_1.yaml` (rutas, parámetros, cuerpos, códigos), incluidos los casos límite de DUNS/`rate`/`limit`/`offset`/rating |
+| `infrastructure.web.contract` | `@WebMvcTest` + `MockMvc` + swagger-request-validator | Compatibilidad automática de los 7 endpoints con `wiki/iop_tech-supplier_flow-main-openapi3_1.yaml` (rutas, parámetros, cuerpos, códigos), incluidos los casos límite de DUNS/`rate`/`limit`/`offset`/rating |
 | `infrastructure.persistence` | `@SpringBootTest` + Testcontainers (PostgreSQL real) | Upsert por DUNS, filtro de elegibilidad, score/bonus contra el ejemplo del `Readme.md`, paginación estable |
 | `infrastructure.external.country` | `@SpringBootTest` acotado + WireMock embebido, en tres contextos separados | Circuit Breaker realmente conectado (AOP), timeouts efectivos, recuperación `OPEN`→`HALF_OPEN`→`CLOSED` (Awaitility, sin `Thread.sleep`) |
 | Concurrencia y rollback | Testcontainers + hilos reales | Optimistic locking a nivel de adaptador y a través del caso de uso `@Transactional` real (sin transición parcial persistida), carrera de inserción concurrente |

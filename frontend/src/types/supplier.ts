@@ -1,4 +1,4 @@
-// Types mirrored 1:1 from wiki/itx-iop_tech-supplier_flow-main-openapi3_1.yaml.
+// Types mirrored 1:1 from wiki/iop_tech-supplier_flow-main-openapi3_1.yaml.
 // Kept separate from any UI-specific view types (add those in the component/hook that needs them,
 // not here).
 

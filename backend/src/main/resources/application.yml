@@ -51,4 +51,4 @@ management:
 
 logging:
   level:
-    com.inditex.supplier: DEBUG
+    com.supplier.management: DEBUG

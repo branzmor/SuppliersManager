@@ -1,20 +1,20 @@
 # Technical Test — Full-Stack Engineer
 
-## Inditex Supplier Management
+## Company Supplier Management
 
-Inditex manages a large network of suppliers. This technical test evaluates your ability to design and implement a **full-stack** solution covering both the backend business logic and the frontend user interface.
+The Company manages a large network of suppliers. This technical test evaluates your ability to design and implement a **full-stack** solution covering both the backend business logic and the frontend user interface.
 
 ---
 
 ## 1. Business Context
 
-Inditex supplier management follows the lifecycle shown below:
+The Company's supplier management follows the lifecycle shown below:
 
 ![FSM Supplier](wiki/iop-techtest-fsm-supplier.png)
 
 ### Supplier Lifecycle
 
-Any supplier can apply as a candidate to work with Inditex. To do so, it must provide the following mandatory data:
+Any supplier can apply as a candidate to work with the Company. To do so, it must provide the following mandatory data:
 
 | Field                | Description                                                                                      |
 |----------------------|--------------------------------------------------------------------------------------------------|
@@ -83,11 +83,11 @@ A **25%** bonus is applied to all suppliers whose annual turnover is one of the 
 
 ### Backend
 
-The test consists of developing a service to manage Inditex suppliers according to the business logic described above.
+The test consists of developing a service to manage the Company's suppliers according to the business logic described above.
 
 **Operations to implement (REST API):**
 
-Endpoints, request/response schemas, and status codes are defined in the OpenAPI specification: [wiki/itx-iop_tech-supplier_flow-main-openapi3_1.yaml](wiki/itx-iop_tech-supplier_flow-main-openapi3_1.yaml).
+Endpoints, request/response schemas, and status codes are defined in the OpenAPI specification: [wiki/iop_tech-supplier_flow-main-openapi3_1.yaml](wiki/iop_tech-supplier_flow-main-openapi3_1.yaml).
 
 Use it as the single source of truth for the API contract.
 
@@ -95,7 +95,7 @@ Use it as the single source of truth for the API contract.
 
 The backend must query an external service to check whether a country is banned.
 
-The contract is defined in the OpenAPI specification: [wiki/itx-iop_tech-supplier_flow-country-openapi3_1.yaml](wiki/itx-iop_tech-supplier_flow-country-openapi3_1.yaml).
+The contract is defined in the OpenAPI specification: [wiki/iop_tech-supplier_flow-country-openapi3_1.yaml](wiki/iop_tech-supplier_flow-country-openapi3_1.yaml).
 
 A mock of this service is already provided in [docker-compose.yml](docker-compose.yml) via WireMock.
 
@@ -126,9 +126,9 @@ Build a **potential suppliers dashboard** that consumes the backend API.
 
 ## 3. Provided Resources
 
-The main API contract is defined in [wiki/itx-iop_tech-supplier_flow-main-openapi3_1.yaml](wiki/itx-iop_tech-supplier_flow-main-openapi3_1.yaml).
+The main API contract is defined in [wiki/iop_tech-supplier_flow-main-openapi3_1.yaml](wiki/iop_tech-supplier_flow-main-openapi3_1.yaml).
 
-The country lookup contract is defined in [wiki/itx-iop_tech-supplier_flow-country-openapi3_1.yaml](wiki/itx-iop_tech-supplier_flow-country-openapi3_1.yaml).
+The country lookup contract is defined in [wiki/iop_tech-supplier_flow-country-openapi3_1.yaml](wiki/iop_tech-supplier_flow-country-openapi3_1.yaml).
 
 The supplier lifecycle diagram is available in [wiki/iop-techtest-fsm-supplier.png](wiki/iop-techtest-fsm-supplier.png).
 
