@@ -87,14 +87,38 @@ describe('Dashboard', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
-  it('shows the empty state when the server returns no suppliers', async () => {
+  it('shows the "no results" empty state when the backend returns zero suppliers', async () => {
     const user = userEvent.setup();
     mockedGetPotentialSuppliers.mockResolvedValueOnce(response([]));
     render(<Dashboard />);
 
     await runSearch(user, 5000);
 
-    expect(await screen.findByText(/no suppliers match/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText('No potential suppliers found for this order amount.'),
+    ).toBeInTheDocument();
+    // This is distinct from the filtered-out case below, so must never say "filters".
+    expect(screen.queryByText(/selected filters/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the "filtered out" empty state when client-side filters hide every row on a non-empty page', async () => {
+    const user = userEvent.setup();
+    mockedGetPotentialSuppliers.mockResolvedValueOnce(
+      response([supplier({ duns: 800000001, name: 'Spanish Co', country: 'ES' })]),
+    );
+    render(<Dashboard />);
+    await runSearch(user, 500);
+    await screen.findByText('Spanish Co');
+
+    // The server did return a supplier - the empty state below comes purely from the client-side
+    // text filter hiding it, and must say so distinctly from a genuinely empty backend response.
+    await user.type(screen.getByLabelText(/search/i), 'no such supplier name');
+
+    expect(
+      await screen.findByText('No suppliers on this page match the selected filters.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/for this order amount/i)).not.toBeInTheDocument();
+    expect(screen.getByText('0 visible suppliers out of 1 total')).toBeInTheDocument();
   });
 
   it('supports paginating with limit/offset and shows the total count', async () => {

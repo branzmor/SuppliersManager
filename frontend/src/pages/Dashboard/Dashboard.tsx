@@ -58,7 +58,7 @@ export function Dashboard() {
       {!isLoading && !error && hasSearched && (
         <>
           {suppliers.length === 0 ? (
-            <EmptyState />
+            <EmptyState reason="no-results" />
           ) : (
             <>
               <FiltersBar
@@ -75,7 +75,7 @@ export function Dashboard() {
                   empty case from "the search itself returned zero suppliers" and needs its own
                   message, or the user would just see a table with headers and no rows. */}
               {visibleSuppliers.length === 0 ? (
-                <EmptyState />
+                <EmptyState reason="filtered-out" />
               ) : (
                 <ResultsTable
                   suppliers={visibleSuppliers}
