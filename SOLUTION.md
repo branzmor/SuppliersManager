@@ -117,6 +117,28 @@ npm run build
 - `npm run lint` (ESLint 9, flat config): sin errores ni avisos.
 - `npm run build` (`tsc -b && vite build`): compilación TypeScript y build de Vite correctos.
 
+### End-to-end (Playwright + Gherkin)
+
+Suite E2E en [`e2e/`](e2e/README.md): escenarios Gherkin (`.feature`) ejecutados con Playwright
+(vía `playwright-bdd`) contra el stack completo levantado en Docker (navegador → nginx/SPA →
+Spring Boot → PostgreSQL/WireMock), en un proyecto Compose propio con base de datos efímera
+(tmpfs). Solo requiere Node 20+ y Docker:
+
+```bash
+cd e2e
+npm ci
+npx playwright install chromium
+npm run e2e          # construye, arranca, siembra datos, ejecuta y destruye el stack
+npm run e2e:headed   # con navegador visible
+npm run e2e:ui       # Playwright UI mode
+npm run e2e:report   # informe HTML de la última ejecución
+```
+
+Última ejecución verificada en este entorno: **30/30 escenarios** (24 del dashboard, en
+paralelo, + 6 de ciclo de vida), sin reintentos. Estabilidad comprobada repitiendo cada escenario
+5 veces con 6 workers y `--retries 0` (120/120 y 54/54). Estrategia de datos, separación entre
+escenarios genuinos e interceptados y decisiones de diseño en [`e2e/README.md`](e2e/README.md).
+
 ## Arquitectura
 
 Hexagonal / puertos y adaptadores, con un único agregado, `SupplierRecord` (identidad = DUNS), en
@@ -629,6 +651,7 @@ de IDE, logs y (en el frontend) `coverage`.
 | Concurrencia y rollback | Testcontainers + hilos reales | Optimistic locking a nivel de adaptador y a través del caso de uso `@Transactional` real (sin transición parcial persistida), carrera de inserción concurrente |
 | Arquitectura | ArchUnit | Las 4 reglas de la arquitectura hexagonal |
 | Frontend | Vitest + Testing Library | Formateadores, hooks de filtro/orden, validación de `SearchForm`, `Dashboard` de forma integrada (carga, éxito, error, los dos estados vacíos por separado, paginación, filtros, orden, petición fuera de orden, reset de filtros) |
+| End-to-end | Playwright + Gherkin (`playwright-bdd`) contra el stack Docker completo | Búsqueda, validación del importe mínimo, orden y formato exactos de resultados con score/bonus, filtros, ordenación, paginación, estados vacío/carga/error (red interceptada solo para fallos y latencia) y visibilidad en el dashboard de candidatos pendientes, rechazados, aceptados y baneados |
 
 Los recuentos exactos de la última ejecución están en
 [Cómo ejecutar las pruebas](#cómo-ejecutar-las-pruebas).

@@ -1,0 +1,78 @@
+# Isolated, throw-away copy of the full stack for the E2E suite (see e2e/README.md).
+#
+# Differs from the root docker-compose.yml on purpose:
+#   - its own Compose project name, so it never touches the developer's `docker compose up` stack
+#     or its `db-data` volume;
+#   - Postgres keeps its data on tmpfs, so every run starts from an empty, migrated database;
+#   - only the frontend and backend are published to the host, on configurable ports that default
+#     to values that don't clash with the regular stack (5173/8080);
+#   - the frontend is built against the E2E backend's host URL (VITE_API_BASE_URL is baked in at
+#     build time) and gets a healthcheck, so `docker compose up --wait` means "ready to browse".
+name: supplier-management-e2e
+
+services:
+  country-service:
+    image: wiremock/wiremock:3.9.1
+    volumes:
+      - ../wiremock:/home/wiremock:ro
+    command: ["--global-response-templating"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/__admin/mappings"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: supplier
+      POSTGRES_USER: supplier
+      POSTGRES_PASSWORD: supplier
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supplier -d supplier"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  backend:
+    build:
+      context: ../backend
+    ports:
+      - "${E2E_BACKEND_PORT:-18080}:8080"
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: supplier
+      DB_USER: supplier
+      DB_PASSWORD: supplier
+      COUNTRY_SERVICE_URL: http://country-service:8080
+    depends_on:
+      db:
+        condition: service_healthy
+      country-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:${E2E_BACKEND_PORT:-18080}
+    ports:
+      - "${E2E_FRONTEND_PORT:-15173}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      # 127.0.0.1, not localhost: busybox wget tries ::1 first and nginx.conf only listens on IPv4.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 2s
+      timeout: 5s
+      retries: 30

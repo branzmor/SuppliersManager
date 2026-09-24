@@ -1,0 +1,27 @@
+{
+  "name": "supplier-management-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "bddgen": "bddgen",
+    "e2e": "bddgen && playwright test",
+    "e2e:headed": "bddgen && playwright test --headed",
+    "e2e:ui": "bddgen && playwright test --ui",
+    "e2e:debug": "bddgen && playwright test --debug",
+    "e2e:report": "playwright show-report",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^22.20.4",
+    "eslint": "^9.39.5",
+    "eslint-plugin-playwright": "^2.12.0",
+    "globals": "^17.12.0",
+    "playwright-bdd": "^9.2.1",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.70.1"
+  }
+}
