@@ -64,8 +64,12 @@ export function FiltersBar({
       </div>
 
       <div className="filters-bar__field">
-        <span className="filters-bar__label">Rating</span>
-        <div className="filters-bar__ratings">
+        <span id="filter-rating-label" className="filters-bar__label">
+          Rating
+        </span>
+        {/* Groups the checkboxes under the "Rating" label for assistive tech - otherwise each is
+            announced as just "A", "B", ... with nothing saying what they filter. */}
+        <div className="filters-bar__ratings" role="group" aria-labelledby="filter-rating-label">
           {RATINGS.map((rating) => (
             <label key={rating} className="filters-bar__rating-option">
               <input
